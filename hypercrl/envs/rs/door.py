@@ -2,6 +2,7 @@ from collections import OrderedDict
 import numpy as np
 import os
 
+import torch
 from robosuite.utils.transform_utils import convert_quat
 
 from robosuite.environments.robot_env import RobotEnv
@@ -14,10 +15,13 @@ from robosuite.models.tasks import Task, UniformRandomSampler, TableTopTask
 
 from robosuite.models.grippers import PandaGripper
 from robosuite.models.objects import MujocoXMLObject
-from gym.envs.robotics.rotations import (quat2euler, subtract_euler, quat_mul,\
-                                        quat2axisangle, quat_conjugate, quat2mat)
+from gym.envs.robotics.rotations import (quat2euler, subtract_euler, quat_mul, \
+                                         quat2axisangle, quat_conjugate, quat2mat)
 
-def print_quat(obs): 
+from hypercrl.srl import SRLTrainer
+
+
+def print_quat(obs):
     print("Position in from world to EE", obs['robot0_robot-state'][:3])
     quat = self.sim.data.get_body_xquat(self.robots[0].robot_model.eef_name)
     print("Quat [w, x, y, z]", quat)
@@ -25,12 +29,13 @@ def print_quat(obs):
     print("Axis e", axis, "Angle", angle)
     print("euler", quat2euler(quat))
 
+
 class DoorArena(Arena):
     """Workspace that contains a tabletop with two fixed pegs."""
 
     def __init__(self, handle):
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-                'assets', 'door', f'{handle}.xml')
+                            'assets', 'door', f'{handle}.xml')
         super().__init__(path)
         self.floor = self.worldbody.find("./geom[@name='floor']")
 
@@ -39,6 +44,7 @@ class DoorArena(Arena):
     def configure_location(self):
         self.bottom_pos = np.array([0, 0, 0])
         self.floor.set("pos", array_to_string(self.bottom_pos))
+
 
 class OpenDoorTask(Task):
     """
@@ -59,7 +65,7 @@ class OpenDoorTask(Task):
 
         self.merge_robot(mujoco_robot)
         self.merge_arena(mujoco_arena)
-        #self.save_model("/home/philiph/model.xml", pretty=True)
+        # self.save_model("/home/philiph/model.xml", pretty=True)
 
     def merge_robot(self, mujoco_robot):
         """Adds robot model to the MJCF model."""
@@ -71,41 +77,43 @@ class OpenDoorTask(Task):
         self.arena = mujoco_arena
         self.merge(mujoco_arena)
 
+
 class PandaDoor(RobotEnv):
     """
     This class corresponds to the lifting task for a single robot arm.
     """
 
     def __init__(
-        self,
-        robots,
-        handle_type="lever",
-        mass_scale=1.0,
-        handle_ypos = 0.0,
-        joint_range = [-1.57, 1.57],
-        pose_control=False,
-        controller_configs=None,
-        gripper_types="PandaGripper",
-        gripper_visualizations=False,
-        initialization_noise="default",  
-        use_camera_obs=False,
-        use_object_obs=True,
-        reward_scale=2.25,
-        reward_shaping=True,
-        placement_initializer=None,
-        use_indicator_object=False,
-        has_renderer=False,
-        has_offscreen_renderer=False,
-        render_camera="frontview",
-        render_collision_mesh=False,
-        render_visual_mesh=True,
-        control_freq=10,
-        horizon=220,
-        ignore_done=False,
-        camera_names="agentview",
-        camera_heights=256,
-        camera_widths=256,
-        camera_depths=False,
+            self,
+            robots,
+            handle_type="lever",
+            mass_scale=1.0,
+            handle_ypos=0.0,
+            joint_range=[-1.57, 1.57],
+            pose_control=False,
+            controller_configs=None,
+            gripper_types="PandaGripper",
+            gripper_visualizations=False,
+            initialization_noise="default",
+            use_camera_obs=False,
+            use_object_obs=True,
+            reward_scale=2.25,
+            reward_shaping=True,
+            placement_initializer=None,
+            use_indicator_object=False,
+            has_renderer=False,
+            has_offscreen_renderer=False,
+            render_camera="frontview",
+            render_collision_mesh=False,
+            render_visual_mesh=True,
+            control_freq=10,
+            horizon=220,
+            ignore_done=False,
+            camera_names="agentview",
+            camera_heights=256,
+            camera_widths=256,
+            camera_depths=False,
+            srl=None
     ):
         """
         Args:
@@ -186,6 +194,7 @@ class PandaDoor(RobotEnv):
                 bool if same depth setting is to be used for all cameras or else it should be a list of the same length as
                 "camera names" param.
 
+            srl (hypercrl.srl.SRL): Use the given SRL model for state representation learning, don't use SRL otherwise.
         """
         # First, verify that only one robot is being inputted
         self._check_robot_configuration(robots)
@@ -207,7 +216,7 @@ class PandaDoor(RobotEnv):
         self.use_object_obs = use_object_obs
 
         self._success = False
-  
+
         # object placement initializer
         if placement_initializer:
             self.placement_initializer = placement_initializer
@@ -237,7 +246,7 @@ class PandaDoor(RobotEnv):
             camera_names=camera_names,
             camera_heights=camera_heights,
             camera_widths=camera_widths,
-            camera_depths=camera_depths,
+            camera_depths=camera_depths
         )
 
         self.modify_door_mass(mass_scale)
@@ -247,11 +256,18 @@ class PandaDoor(RobotEnv):
         self.sim.forward()
         self.sim.reset()
 
+        # SRL
+        self.srl = None
+        self.srl_trainer = None
+        if srl is not None:
+            self.srl = srl(128)
+            self.srl_trainer = SRLTrainer(device=torch.device('cuda'), horizon=self.horizon)
+
     def modify_door_mass(self, scale):
         idx = self.sim.model.body_names.index("door_link")
         self.sim.model.body_mass[idx] *= scale
-        self.sim.model.body_inertia[idx] *= scale 
-    
+        self.sim.model.body_inertia[idx] *= scale
+
     def modify_door_handle_pos(self, ypos):
         idx = self.sim.model.body_names.index("knob_link")
         self.sim.model.body_pos[idx][1] = ypos
@@ -286,12 +302,12 @@ class PandaDoor(RobotEnv):
         # use a shaping reward
         if self.reward_shaping:
             reward_dist = -np.linalg.norm(self._get_dist_vec())
-            reward_log_dist = -np.log(np.square(np.linalg.norm(reward_dist))+5e-3) - 5.0 
+            reward_log_dist = -np.log(np.square(np.linalg.norm(reward_dist)) + 5e-3) - 5.0
             reward_ori = - np.linalg.norm(self._get_ori_diff_no_xaxis()) if self.pose_control else 0
-            reward_door = abs(self._get_door_hinge_pos(sin=False)) *50
+            reward_door = abs(self._get_door_hinge_pos(sin=False)) * 50
 
             if self.handle_type == "lever" or self.handle_type == "round":
-                reward_doorknob = abs(self._get_door_knob_hinge_pos()) * 20 #*50
+                reward_doorknob = abs(self._get_door_knob_hinge_pos()) * 20  # *50
                 reward = reward_door + reward_doorknob + reward_ori + reward_dist + reward_log_dist
             else:
                 reward = reward_door + reward_ori + reward_dist + reward_log_dist
@@ -354,11 +370,11 @@ class PandaDoor(RobotEnv):
         world_q_ee = self.sim.data.get_body_xquat(self.robots[0].robot_model.eef_name)
 
         handle_q_ee = quat_mul(quat_conjugate(world_q_handle), world_q_ee)
-        handle_q_des = np.array([0.7071067811865476, 0, -0.7071067811865476, 0.]) # [w, x, y, z]
-        #world_q_des = quat_mul(world_q_handle, np.array([0.7071, 0, -0.7071, 0.]))
+        handle_q_des = np.array([0.7071067811865476, 0, -0.7071067811865476, 0.])  # [w, x, y, z]
+        # world_q_des = quat_mul(world_q_handle, np.array([0.7071, 0, -0.7071, 0.]))
 
         des_q_ee = quat_mul(quat_conjugate(handle_q_des), handle_q_ee)
-        #des_q_ee2 = quat_mul(quat_conjugate(world_q_des), world_q_ee)
+        # des_q_ee2 = quat_mul(quat_conjugate(world_q_des), world_q_ee)
         euler_diff = quat2euler(des_q_ee)
         euler_diff[2] = 0
         return euler_diff
@@ -422,11 +438,11 @@ class PandaDoor(RobotEnv):
         if self.pose_control:
             action = np.zeros(7)
             # Move the gripper behind the joint
-            reset_pos = np.array([0.1, 0., 0.]) # wrt to handle
+            reset_pos = np.array([0.1, 0., 0.])  # wrt to handle
             # reset_ori is the attitude of desired EE wrt world
             # such that it transforms a vector from desired EE frame to world
             reset_ori = np.array([-0.5, -0.5, 0.5, 0.5])
-            
+
             def angle_diff():
                 eef_ori = self.sim.data.get_body_xquat(self.robots[0].robot_model.eef_name)
                 q_diff = quat_mul(quat_conjugate(eef_ori), reset_ori)
@@ -445,7 +461,7 @@ class PandaDoor(RobotEnv):
                 action[3:6] = angle_diff()
 
         else:
-            reset_pos = np.array([0.1, 0., 0.05]) # Desire_wrt_handle
+            reset_pos = np.array([0.1, 0., 0.05])  # Desire_wrt_handle
             action = reset_pos - obs['robot0_robot-state']
             for _ in range(20):
                 obs, _, _, _ = self.step(action * 10)
@@ -472,6 +488,11 @@ class PandaDoor(RobotEnv):
         if not self.pose_control:
             action = np.array(list(action) + [1])
         obs, rew, done, _ = super().step(action)
+
+        if self.srl:
+            camera_obs = obs[self.camera_names[0] + "_image"]
+            self.srl_trainer.add_observation(observation=camera_obs, action=action, reward=rew)
+            obs = {"state": self.srl(camera_obs)}
 
         self._success |= (self._get_door_hinge_pos() >= 0.2)
         info = {"success": self._success}
@@ -515,9 +536,14 @@ class PandaDoor(RobotEnv):
         door_v = self.sim.data.get_joint_qvel("hinge0")
         knob_v = self.sim.data.get_joint_qvel("hinge1") if self.handle_type != "pull" else 0
 
-        dii = {"robot0_robot-state": np.concatenate([dist, handle_q_eef, gripper, 
-                    di['robot0_joint_pos'], di['robot0_joint_vel']]),
-               "object-state": np.array([door_v, knob_v, door, knob]) }
+        dii = {"robot0_robot-state": np.concatenate([dist, handle_q_eef, gripper,
+                                                     di['robot0_joint_pos'], di['robot0_joint_vel']]),
+               "object-state": np.array([door_v, knob_v, door, knob])}
+
+        for key, value in di.items():
+            if str(key).endswith("_image"):
+                dii[key] = value
+
         return dii
 
     def _check_success(self):
@@ -539,21 +565,23 @@ class PandaDoor(RobotEnv):
         if type(robots) is list:
             assert len(robots) == 1, "Error: Only one robot should be inputted for this task!"
 
+
 if __name__ == "__main__":
     # Create dict to hold options that will be passed to env creation call
     options = {}
- 
+
     options["env_name"] = "PandaDoor"
 
     options["handle_type"] = "lever"
 
     options["robots"] = "Panda"
-    
+
     # Choose controller
     controller_name = "OSC_POSE"
     options["pose_control"] = True
 
     from robosuite.controllers import load_controller_config
+
     # Load the desired controller
     options["controller_configs"] = load_controller_config(default_controller=controller_name)
 

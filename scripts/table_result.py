@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import csv
 import json
@@ -19,12 +20,14 @@ from hypercrl.tools import reset_seed, read_hparams
 
 N_run_per_seed = 10
 
+
 def isfloat(element):
     try:
         float(element)
         return True
     except ValueError:
         return False
+
 
 def evaluate_reward(env, agent, task_id):
     ts = time.time()
@@ -42,9 +45,10 @@ def evaluate_reward(env, agent, task_id):
             eprew += reward
         avg_rewards.append(eprew)
 
-    avg_rewards =  np.mean(avg_rewards)
+    avg_rewards = np.mean(avg_rewards)
     print(f"Evaluating {N_run_per_seed} took {(time.time() - ts):.1f} s")
     return avg_rewards
+
 
 def evaluate_success(env, agent, task_id):
     ts = time.time()
@@ -66,22 +70,22 @@ def evaluate_success(env, agent, task_id):
                 avgtime.append(t)
                 break
         success_rate += int(success)
-    
+
     avgtime = np.mean(avgtime)
 
     success_rate = success_rate / N_run_per_seed
     print(f"Evaluating {N_run_per_seed} took {(time.time() - ts):.1f} s")
     return success_rate, avgtime
 
-def barplot(filename, stats, models, tasks):
 
+def barplot(filename, stats, models, tasks):
     fig, ax = plt.subplots(figsize=(10, 7))
 
-    labels = np.arange(1, tasks+1)
+    labels = np.arange(1, tasks + 1)
     x = np.arange(tasks)
     M = len(models)
     width = 0.7 / M
-    offset = np.linspace(-(M-1)/2, (M-1)/2, M) * width
+    offset = np.linspace(-(M - 1) / 2, (M - 1) / 2, M) * width
 
     rects_list = []
     for m, model in enumerate(models):
@@ -99,7 +103,6 @@ def barplot(filename, stats, models, tasks):
     ax.set_xticklabels(labels)
     ax.legend()
 
-
     def autolabel(rects):
         """Attach a text label above each bar in *rects*, displaying its height."""
         for rect in rects:
@@ -110,7 +113,6 @@ def barplot(filename, stats, models, tasks):
                         textcoords="offset points",
                         ha='center', va='bottom')
 
-
     for rects in rects_list:
         autolabel(rects)
 
@@ -118,11 +120,12 @@ def barplot(filename, stats, models, tasks):
     fig.savefig(filename)
     plt.close(fig)
 
+
 def writecsv(filename, data_mat, style, tasks, models):
     with open(filename, 'w') as f:
         fieldnames = ['model']
         for t in range(tasks):
-            fieldnames.append(str(t+1))
+            fieldnames.append(str(t + 1))
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -132,10 +135,11 @@ def writecsv(filename, data_mat, style, tasks, models):
                 val = data_mat[m, :, t].mean()
                 std = data_mat[m, :, t].std()
                 if style == "%":
-                    row[str(t+1)] = f'{val:.0%} ± {std:.0%}'
+                    row[str(t + 1)] = f'{val:.0%} ± {std:.0%}'
                 else:
-                    row[str(t+1)] = f'{val:.1f} ± {std:.1f}'
+                    row[str(t + 1)] = f'{val:.1f} ± {std:.1f}'
             writer.writerow(row)
+
 
 def main_old(folder, envname, models, seeds, tasks, eval_single=True):
     """
@@ -154,7 +158,7 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
             envs.add_task(t, render=False)
 
         for (m, model) in enumerate(models):
-            hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}' , 'hparams.csv')
+            hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}', 'hparams.csv')
             hparams = read_hparams(folder, hpfile)
 
             # Reload the final model
@@ -167,9 +171,9 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
                 env = envs.get_env(t)
                 rew = evaluate_reward(env, agent, t)
                 stats[m, s, t] = rew
-        
+
         if eval_single:
-            hpfile = osp.join(folder, f'TB{envname}_single_{seed}' , 'hparams.csv')
+            hpfile = osp.join(folder, f'TB{envname}_single_{seed}', 'hparams.csv')
             hparams = read_hparams(folder, hpfile)
 
             for t in range(tasks):
@@ -179,7 +183,7 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
                 env = envs.get_env(t)
                 rew = evaluate_reward(env, agent, t)
                 single_stats[s, t] = rew
-    
+
     # Create bar charts of final reward on different methods 
     filename = osp.join(folder, f'{envname}_final_reward.png')
     barplot(filename, stats, models, tasks)
@@ -198,7 +202,7 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
                 envs.add_task(t, render=False)
 
             for (m, model) in enumerate(models):
-                hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}' , 'hparams.csv')
+                hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}', 'hparams.csv')
                 hparams = read_hparams(folder, hpfile)
 
                 for t in range(tasks):
@@ -207,7 +211,7 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
                         _, _, agent, _, _ = reload_model_hnet(hparams, task_id=t)
                     else:
                         _, agent, _, _ = reload_model(hparams, task_id=t)
-                    
+
                     env = envs.get_env(t)
                     rew = evaluate_reward(env, agent, t)
                     og_stats[m, s, t] = rew
@@ -219,7 +223,8 @@ def main_old(folder, envname, models, seeds, tasks, eval_single=True):
         # Positive Transfer
         filename = osp.join(folder, f'{envname}_forward_transfer.csv')
         pos_trans = (og_stats / single_stats)
-        writecsv(filename, pos_trans, '%', tasks, models) 
+        writecsv(filename, pos_trans, '%', tasks, models)
+
 
 def work(arg):
     seed, models, envname, tasks, folder, run_s = arg
@@ -231,7 +236,7 @@ def work(arg):
         envs.add_task(t, render=False)
 
     for (m, model) in enumerate(models):
-        hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}' , 'hparams.csv')
+        hpfile = osp.join(folder, f'TB{envname}_{model}_{seed}', 'hparams.csv')
         hparams = read_hparams(folder, hpfile)
 
         for j in range(tasks):
@@ -252,6 +257,7 @@ def work(arg):
                     print(f"{model}, Task{t}-{j}: {rew}")
                 stats[m, t, j] = rew
     return stats
+
 
 def main(folder, envname, models, seeds, tasks, run_s):
     """
@@ -280,6 +286,7 @@ def main(folder, envname, models, seeds, tasks, run_s):
         filename = osp.join(folder, f'{envname}_{models[0]}_reward_after_each_task.csv')
     df.to_csv(filename)
 
+
 def work_single(arg):
     seed, envname, tasks, folder, run_s = arg
 
@@ -288,7 +295,7 @@ def work_single(arg):
     envs = CLEnvHandler(envname, seed)
 
     # Load Hparam
-    hpfile = osp.join(folder, f'TB{envname}_single_{seed}' , 'hparams.csv')
+    hpfile = osp.join(folder, f'TB{envname}_single_{seed}', 'hparams.csv')
     hparams = read_hparams(folder, hpfile)
 
     for t in range(tasks):
@@ -296,13 +303,14 @@ def work_single(arg):
         # Reload the model trained after task j
         _, agent, _, _ = reload_model(hparams, task_id=t)
         if run_s:
-            rew, avgtime  = evaluate_success(env, agent, t)
+            rew, avgtime = evaluate_success(env, agent, t)
             print(f"single {rew}/{avgtime}")
         else:
             rew = evaluate_reward(env, agent, t)
         stats[t] = rew
 
     return stats
+
 
 def main_single(folder, envname, seeds, tasks, run_s):
     stats = np.zeros((len(seeds), tasks))
@@ -335,6 +343,6 @@ if __name__ == "__main__":
     seeds = [777, 855, 1045, 1046]
     tasks = 5
     run_success_eval = False
-    #main_old(folder, env, models, seeds, tasks, eval_single=True)
+    # main_old(folder, env, models, seeds, tasks, eval_single=True)
     main(folder, env, models, seeds, tasks, run_success_eval)
-    #main_single(folder, env, seeds, tasks, run_success_eval)
+    # main_single(folder, env, seeds, tasks, run_success_eval)
