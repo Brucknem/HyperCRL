@@ -129,7 +129,7 @@ or ```finetune```
 Use the main python file to reload a checkpoint and replay a trained agent in a GUI window
 
 ```
-python main.py [method_name] [env_name] (optional seed) (optional save_dir) --play
+python main.py [method_name] [env_name] [robot_name] (optional seed) (optional save_dir) --play
 ```
 
 ### Reproduce All Results
