@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 import pytorch_lightning as pl
 
-from hypercrl.srl.robotic_priors import Slowness, Variability
+from hypercrl.srl.robotic_priors import SlownessPrior, VariabilityPrior
 
 
 class SRL(pl.LightningModule):
@@ -28,8 +28,8 @@ class SRL(pl.LightningModule):
         )
         self.representation_layers.to(self.device)
 
-        self.slowness_prior = Slowness()
-        self.variability_prior = Variability()
+        self.slowness_prior = SlownessPrior()
+        self.variability_prior = VariabilityPrior()
 
     def forward(self, x):
         features = self.feature_extractor(x)
