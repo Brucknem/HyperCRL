@@ -112,8 +112,7 @@ class PandaDoor(RobotEnv):
             camera_names="agentview",
             camera_heights=256,
             camera_widths=256,
-            camera_depths=False,
-            srl=None
+            camera_depths=False
     ):
         """
         Args:
@@ -194,7 +193,6 @@ class PandaDoor(RobotEnv):
                 bool if same depth setting is to be used for all cameras or else it should be a list of the same length as
                 "camera names" param.
 
-            srl (hypercrl.srl.SRL): Use the given SRL model for state representation learning, don't use SRL otherwise.
         """
         # First, verify that only one robot is being inputted
         self._check_robot_configuration(robots)
@@ -255,13 +253,6 @@ class PandaDoor(RobotEnv):
             self.modify_door_handle_joint_range(joint_range)
         self.sim.forward()
         self.sim.reset()
-
-        # SRL
-        self.srl = None
-        self.srl_trainer = None
-        if srl is not None:
-            self.srl = srl(128)
-            self.srl_trainer = SRLTrainer(device=torch.device('cuda'), horizon=self.horizon)
 
     def modify_door_mass(self, scale):
         idx = self.sim.model.body_names.index("door_link")
@@ -488,11 +479,6 @@ class PandaDoor(RobotEnv):
         if not self.pose_control:
             action = np.array(list(action) + [1])
         obs, rew, done, _ = super().step(action)
-
-        if self.srl:
-            camera_obs = obs[self.camera_names[0] + "_image"]
-            self.srl_trainer.add_observation(observation=camera_obs, action=action, reward=rew)
-            obs = {"state": self.srl(camera_obs)}
 
         self._success |= (self._get_door_hinge_pos() >= 0.2)
         info = {"success": self._success}
