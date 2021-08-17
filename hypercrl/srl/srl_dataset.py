@@ -1,4 +1,6 @@
 import copy
+import math
+import sys
 import time
 from typing import Union
 
@@ -9,6 +11,7 @@ from torchvision import transforms
 from torch.utils.data import Dataset
 
 from hypercrl.srl import SRL
+from collections import defaultdict
 
 
 class DataPoint:
@@ -55,6 +58,8 @@ class SRLDataSet(Dataset):
         if transform is not None:
             self.transform = transforms.Compose([self.transform, transform])
 
+        self.same_action_pairs = []
+
     def add_datapoint(self, episode: int, observation: np.ndarray, action: np.ndarray, reward: int):
         """
         Adds the given values as a datapoint to the dataset.
@@ -68,66 +73,56 @@ class SRLDataSet(Dataset):
         """
         self.data_points.append(DataPoint(episode=episode, observation=observation, action=action, reward=reward))
 
-    def get_similar_states(self, idx):
-        """
-        Gets the "similar_states" field for a sample.
+    def calculate_same_action_pairs(self):
+        for i in range(len(self.data_points) - 1):
+            for j in range(len(self.data_points) - 1):
+                if i >= j:
+                    continue
 
-        Args:
-            idx: The id of the datapoint.
+                entry = self.data_points[i]
+                other = self.data_points[j]
+                if (entry.action - other.action).sum() != 0:
+                    continue
 
-        Returns: A dictionary with the observation at idx and the following observation at idx + 1,
-                    the action at idx and the reward at idx.
-                    If the observations at idx and idx + 1 are from different episodes,
-                    the observation at idx is repeated and the action is set to zero.
-        """
-        data_point: DataPoint = self.data_points[idx]
-        action: np.ndarray = data_point.action
-        reward = data_point.reward
+                if entry.episode != self.data_points[i + 1].episode:
+                    continue
 
-        if idx != len(self) - 1:
-            next_data_point: DataPoint = self.data_points[idx + 1]
-        else:
-            next_data_point = data_point
-            action = np.zeros(action.shape)
+                if other.episode != self.data_points[j + 1].episode:
+                    continue
 
-        if data_point.episode != next_data_point.episode:
-            next_data_point = data_point
-            action = np.zeros(action.shape)
+                self.same_action_pairs.append(((i, i + 1), (j, j + 1)))
 
-        return {
-            "observations": [self.transform(data_point.observation), self.transform(next_data_point.observation)],
-            "action": torch.from_numpy(action),
-            "reward": torch.tensor(reward)
+    def get_known_action(self):
+        index = np.random.randint(0, len(self.data_points))
+        return index, self.data_points[index].action
+
+    def __len__(self):
+        return len(self.same_action_pairs)
+
+    def __getitem__(self, idx):
+        same_action_pair = self.same_action_pairs[idx]
+        result = {
+            'observations': (
+                (self.transform(self.data_points[same_action_pair[0][0]].observation),
+                 self.transform(self.data_points[same_action_pair[0][1]].observation)),
+                (self.transform(self.data_points[same_action_pair[1][0]].observation),
+                 self.transform(self.data_points[same_action_pair[1][1]].observation)),
+            ),
+            'actions': (
+                (torch.from_numpy(self.data_points[same_action_pair[0][0]].action),
+                 torch.from_numpy(self.data_points[same_action_pair[0][1]].action)),
+                (torch.from_numpy(self.data_points[same_action_pair[1][0]].action),
+                 torch.from_numpy(self.data_points[same_action_pair[1][1]].action)),
+            ),
+            'rewards': (
+                (torch.tensor(self.data_points[same_action_pair[0][0]].reward),
+                 torch.tensor(self.data_points[same_action_pair[0][1]].reward)),
+                (torch.tensor(self.data_points[same_action_pair[1][0]].reward),
+                 torch.tensor(self.data_points[same_action_pair[1][1]].reward)),
+            ),
         }
 
-    def get_dissimilar_states(self, idx):
-        data_point: DataPoint = self.data_points[idx]
-        action: np.ndarray = data_point.action
-        reward = data_point.reward
-
-        other_idx = idx
-        while abs(other_idx - idx) < 50:
-            other_idx = np.random.randint(0, len(self))
-
-        return {
-            "observations": [self.transform(data_point.observation),
-                             self.transform(self.data_points[other_idx].observation)],
-            "action": torch.from_numpy(action),
-            "reward": torch.tensor(reward)
-        }
+        return result
 
     def clear(self):
         self.data_points = []
-
-    def __len__(self):
-        return len(self.data_points)
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        sample = {
-            "similar_states": self.get_similar_states(idx),
-            "dissimilar_states": self.get_dissimilar_states(idx),
-        }
-        return sample

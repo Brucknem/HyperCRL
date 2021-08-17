@@ -29,8 +29,6 @@ if __name__ == "__main__":
     options["handle_type"] = "lever"
     options["robots"] = "Panda"
     options["camera_names"] = ['birdview', 'frontview', 'sideview']
-    horizon = 220
-    options["horizon"] = horizon
 
     # Choose controller
     controller_name = "OSC_POSE"
@@ -70,29 +68,42 @@ if __name__ == "__main__":
 
     srl = SRL(128)
     srl_dataset = SRLDataSet()
+    trainer = SRLTrainer(srl=srl)
 
     observation_name = options["camera_names"][0] + "_image"
 
+    episode = 0
+
     # do visualization
-    for i in range(2 * horizon):
+    for i in range(10000):
         # env.render()
-        action = np.random.uniform(low, high)
+
+        index = -1
+        if len(srl_dataset.data_points) > 0 and np.random.randint(0, 100) < 20:
+            index, action = srl_dataset.get_known_action()
+        else:
+            action = np.random.uniform(low, high)
+
         obs, reward, done, _ = env.step(action)
         image = obs[observation_name]
 
-        srl_dataset.add_datapoint(episode=int(i / horizon), observation=image, action=action, reward=reward)
+        srl_dataset.add_datapoint(episode=episode, observation=image, action=action, reward=reward)
+
+        if done:
+            episode += 1
 
         if render:
             env.render()
-        else:
-            image = cv2.flip(image, 0)
-            cv2.imshow(observation_name, image)
-            cv2.waitKey(1)
+        # else:
+        #     image = cv2.flip(image, 0)
+        #     cv2.imshow(observation_name, image)
+        #     cv2.waitKey(1)
         if done:
             env.reset()
 
     if not render:
         cv2.destroyAllWindows()
 
-    trainer = SRLTrainer(srl=srl)
+    srl_dataset.calculate_same_action_pairs()
     trainer.train(srl_dataset=srl_dataset)
+    srl_dataset.clear()

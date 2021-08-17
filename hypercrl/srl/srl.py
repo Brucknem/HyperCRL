@@ -12,58 +12,63 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 import pytorch_lightning as pl
 
-from hypercrl.srl.robotic_priors import SlownessPrior, VariabilityPrior
+from hypercrl.srl.robotic_priors import SlownessPrior, VariabilityPrior, ProportionalityPrior, RepeatabilityPrior, \
+    CausalityPrior, ReferencePointPrior
 
 
 class SRL(pl.LightningModule):
     def __init__(self, out_features):
         super().__init__()
         self.out_features = out_features
-        self.feature_extractor = torchvision.models.resnet18(pretrained=True)
-        self.representation_layers = nn.Sequential(
-            # TODO adjust FC layers
-            # nn.Linear(in_features=self.feature_extractor.fc.out_features,
-            #           out_features=self.feature_extractor.fc.in_features),
-            nn.Linear(in_features=self.feature_extractor.fc.out_features, out_features=out_features),
-        )
-        self.representation_layers.to(self.device)
+        self.encoder = torchvision.models.resnet18(pretrained=True)
+
+        for params in self.encoder.parameters():
+            params.requires_grad = False
+
+        self.encoder.fc = nn.Linear(in_features=512, out_features=out_features)
+        self.encoder.fc.requires_grad = True
 
         self.slowness_prior = SlownessPrior()
         self.variability_prior = VariabilityPrior()
+        self.proportionality_prior = ProportionalityPrior()
+        self.repeatability_prior = RepeatabilityPrior()
+        self.causality_prior = CausalityPrior()
+        self.reference_point_prior = ReferencePointPrior()
 
     def forward(self, x):
-        features = self.feature_extractor(x)
-        result = self.representation_layers(features)
-        # result = result.cpu().detach().numpy()
+        result = self.encoder(x)
         return result
 
     def log_loss(self, name: str, value: any):
         self.log("losses/" + name, value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
-    def project_forward(self, batch):
-        observations = batch["similar_states"]["observations"] + batch["dissimilar_states"]["observations"]
-        result = []
-        for observation in observations:
-            with torch.no_grad():
-                features = self.feature_extractor(observation)
-            representation = self.representation_layers(features)
-            result.append(representation)
-        return result
-
     def training_step(self, batch, batch_idx):
-        observations = self.project_forward(batch)
+        state = self.encoder(batch['observations'][0][0])
+        next_state = self.encoder(batch['observations'][0][1])
+        other_state = self.encoder(batch['observations'][1][0])
+        other_next_state = self.encoder(batch['observations'][1][1])
 
         total_loss = 0
-        slowness_loss = self.slowness_prior(observations[0], observations[1])
+        slowness_loss = self.slowness_prior(state, next_state) + self.slowness_prior(other_state, other_next_state)
         total_loss += slowness_loss
 
-        variability_loss = self.variability_prior(observations[0], observations[1]) + self.variability_prior(
-            observations[2], observations[3])
+        variability_loss = self.variability_prior(state, other_state) + \
+                           self.variability_prior(state, other_next_state) + \
+                           self.variability_prior(other_state, next_state) + \
+                           self.variability_prior(other_next_state, next_state)
         total_loss += variability_loss
+
+        proportionality_loss = self.proportionality_prior(state, next_state, other_state, other_next_state)
+        total_loss += proportionality_loss
+
+        repeatability_loss = self.repeatability_prior(state, next_state, other_state, other_next_state)
+        total_loss += repeatability_loss
 
         self.log_loss("total_loss", total_loss)
         self.log_loss("slowness_loss", slowness_loss)
         self.log_loss("variability_loss", variability_loss)
+        self.log_loss("proportionality_loss", proportionality_loss)
+        self.log_loss("repeatability_loss", repeatability_loss)
         return total_loss
 
     def configure_optimizers(self):

@@ -7,7 +7,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 import multiprocessing
 
-from hypercrl.srl import SRL
+from hypercrl.srl import SRL, SRLDataSet
 
 
 class SRLTrainer:
@@ -15,7 +15,9 @@ class SRLTrainer:
         self.srl = srl
         self.name = name
         self.root_dir = os.path.join("../../../", save_dir)
-        self.model_checkpoint_name = "latest.ckpt"
+        self.model_checkpoint_name = ''
+        self.last_epoch = 0
+
         self.cpu_cores = multiprocessing.cpu_count()
         self.callbacks = [
             EarlyStopping('losses/total_loss'),
@@ -23,12 +25,25 @@ class SRLTrainer:
         self.logger = TensorBoardLogger(self.root_dir, name=self.name, default_hp_metric=False)
         self.batch_size = batch_size
 
-    def train(self, srl_dataset):
+    def train(self, srl_dataset: SRLDataSet, min_epochs: int = 15, max_epochs: int = 250):
         dataloader = DataLoader(srl_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.cpu_cores)
 
-        checkpoint_path = os.path.join(self.root_dir, self.name, self.model_checkpoint_name)
-        log_every_n_steps = int(self.batch_size / 10)
+        log_every_n_steps = 10
 
-        trainer = pl.Trainer(gpus=1, logger=self.logger, log_every_n_steps=log_every_n_steps, callbacks=self.callbacks)
+        params = {
+            'gpus': 1,
+            'logger': self.logger,
+            'log_every_n_steps': log_every_n_steps,
+            'callbacks': self.callbacks,
+            'max_epochs': self.last_epoch + max_epochs,
+            'min_epochs': self.last_epoch + min_epochs
+        }
+
+        if os.path.isfile(self.model_checkpoint_name):
+            params['resume_from_checkpoint'] = self.model_checkpoint_name
+
+        trainer = pl.Trainer(**params)
         trainer.fit(self.srl, dataloader)
-        trainer.save_checkpoint(checkpoint_path)
+        self.model_checkpoint_name = os.path.join(trainer.checkpoint_callback.dirpath, "latest.ckpt")
+        trainer.save_checkpoint(self.model_checkpoint_name)
+        self.last_epoch = trainer.current_epoch
