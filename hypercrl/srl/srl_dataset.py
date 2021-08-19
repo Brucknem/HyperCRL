@@ -58,6 +58,7 @@ class SRLDataSet(Dataset):
         if transform is not None:
             self.transform = transforms.Compose([self.transform, transform])
 
+        self.same_action_buffer = defaultdict(set)
         self.same_action_pairs = []
 
     def add_datapoint(self, episode: int, observation: np.ndarray, action: np.ndarray, reward: int):
@@ -72,29 +73,39 @@ class SRLDataSet(Dataset):
 
         """
         self.data_points.append(DataPoint(episode=episode, observation=observation, action=action, reward=reward))
+        self.same_action_buffer[tuple(action)].add(len(self.data_points) - 1)
 
     def calculate_same_action_pairs(self):
-        for i in range(len(self.data_points) - 1):
-            for j in range(len(self.data_points) - 1):
-                if i >= j:
-                    continue
+        self.same_action_pairs = [
+            ((i, i + 1), (j, j + 1)) for same_action_set in self.same_action_buffer.values() for i in same_action_set
+            for j in same_action_set if
+            len(same_action_set) > 1 and i < j and i != len(self.data_points) - 1 and j != len(
+                self.data_points) - 1 and self.data_points[i].episode == self.data_points[i + 1].episode and
+            self.data_points[j].episode == self.data_points[j + 1].episode]
 
-                entry = self.data_points[i]
-                other = self.data_points[j]
-                if (entry.action - other.action).sum() != 0:
-                    continue
-
-                if entry.episode != self.data_points[i + 1].episode:
-                    continue
-
-                if other.episode != self.data_points[j + 1].episode:
-                    continue
-
-                self.same_action_pairs.append(((i, i + 1), (j, j + 1)))
+    # def calculate_same_action_pairs(self):
+    #     for i in range(len(self.data_points) - 1):
+    #         for j in range(len(self.data_points) - 1):
+    #             if i >= j:
+    #                 continue
+    #
+    #             entry = self.data_points[i]
+    #             other = self.data_points[j]
+    #             if (entry.action - other.action).sum() != 0:
+    #                 continue
+    #
+    #             if entry.episode != self.data_points[i + 1].episode:
+    #                 continue
+    #
+    #             if other.episode != self.data_points[j + 1].episode:
+    #                 continue
+    #
+    #             self.same_action_pairs.append(((i, i + 1), (j, j + 1)))
 
     def get_known_action(self):
         index = np.random.randint(0, len(self.data_points))
-        return index, self.data_points[index].action
+        action = self.data_points[index].action
+        return index, action
 
     def __len__(self):
         return len(self.same_action_pairs)

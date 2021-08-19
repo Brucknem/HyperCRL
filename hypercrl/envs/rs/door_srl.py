@@ -1,3 +1,4 @@
+import time
 from collections import OrderedDict
 import numpy as np
 import os
@@ -75,8 +76,11 @@ if __name__ == "__main__":
     episode = 0
 
     # do visualization
-    for i in range(10000):
+    for i in range(20000):
         # env.render()
+
+        if i % 200 == 0:
+            print("Step:", i)
 
         index = -1
         if len(srl_dataset.data_points) > 0 and np.random.randint(0, 100) < 20:
@@ -94,10 +98,10 @@ if __name__ == "__main__":
 
         if render:
             env.render()
-        # else:
-        #     image = cv2.flip(image, 0)
-        #     cv2.imshow(observation_name, image)
-        #     cv2.waitKey(1)
+        else:
+            image = cv2.flip(image, 0)
+            cv2.imshow(observation_name, image)
+            cv2.waitKey(1)
         if done:
             env.reset()
 
@@ -105,5 +109,5 @@ if __name__ == "__main__":
         cv2.destroyAllWindows()
 
     srl_dataset.calculate_same_action_pairs()
-    trainer.train(srl_dataset=srl_dataset)
+    trainer.train(srl_dataset=srl_dataset, batch_size=128)
     srl_dataset.clear()

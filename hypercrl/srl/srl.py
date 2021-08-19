@@ -25,7 +25,10 @@ class SRL(pl.LightningModule):
         for params in self.encoder.parameters():
             params.requires_grad = False
 
-        self.encoder.fc = nn.Linear(in_features=512, out_features=out_features)
+        self.encoder.fc = nn.Sequential(
+            nn.Linear(in_features=512, out_features=512),
+            nn.Linear(in_features=512, out_features=out_features)
+        )
         self.encoder.fc.requires_grad = True
 
         self.slowness_prior = SlownessPrior()
@@ -39,8 +42,11 @@ class SRL(pl.LightningModule):
         result = self.encoder(x)
         return result
 
-    def log_loss(self, name: str, value: any):
-        self.log("losses/" + name, value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+    def log_loss(self, prefix: str, name: str, value: any):
+        title = name
+        if prefix != '':
+            title = prefix + "/" + name
+        self.log(title, value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
     def training_step(self, batch, batch_idx):
         state = self.encoder(batch['observations'][0][0])
@@ -58,17 +64,24 @@ class SRL(pl.LightningModule):
                            self.variability_prior(other_next_state, next_state)
         total_loss += variability_loss
 
+        scale = 10
         proportionality_loss = self.proportionality_prior(state, next_state, other_state, other_next_state)
-        total_loss += proportionality_loss
+        total_loss += scale * proportionality_loss
 
         repeatability_loss = self.repeatability_prior(state, next_state, other_state, other_next_state)
-        total_loss += repeatability_loss
+        total_loss += scale * repeatability_loss
 
-        self.log_loss("total_loss", total_loss)
-        self.log_loss("slowness_loss", slowness_loss)
-        self.log_loss("variability_loss", variability_loss)
-        self.log_loss("proportionality_loss", proportionality_loss)
-        self.log_loss("repeatability_loss", repeatability_loss)
+        causality_loss = self.causality_prior(state, other_state, batch["rewards"][0][0], batch["rewards"][1][0])
+        total_loss += scale * causality_loss
+
+        self.log_loss("robotic_priors", "all", total_loss)
+        self.log_loss("robotic_priors", "slowness_loss", slowness_loss)
+        self.log_loss("robotic_priors", "variability_loss", variability_loss)
+        self.log_loss("robotic_priors", "proportionality_loss", proportionality_loss)
+        self.log_loss("robotic_priors", "repeatability_loss", repeatability_loss)
+        self.log_loss("robotic_priors", "causality_loss", causality_loss)
+
+        self.log_loss("", "_total_loss", total_loss)
         return total_loss
 
     def configure_optimizers(self):

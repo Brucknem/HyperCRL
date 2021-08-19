@@ -11,7 +11,7 @@ from hypercrl.srl import SRL, SRLDataSet
 
 
 class SRLTrainer:
-    def __init__(self, srl: SRL, save_dir="srl_logs", name="srl", batch_size=128):
+    def __init__(self, srl: SRL, save_dir="srl_logs", name="srl"):
         self.srl = srl
         self.name = name
         self.root_dir = os.path.join("../../../", save_dir)
@@ -20,13 +20,12 @@ class SRLTrainer:
 
         self.cpu_cores = multiprocessing.cpu_count()
         self.callbacks = [
-            EarlyStopping('losses/total_loss'),
+            # EarlyStopping('_total_loss', min_delta=0.0, patience=5),
         ]
         self.logger = TensorBoardLogger(self.root_dir, name=self.name, default_hp_metric=False)
-        self.batch_size = batch_size
 
-    def train(self, srl_dataset: SRLDataSet, min_epochs: int = 15, max_epochs: int = 250):
-        dataloader = DataLoader(srl_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.cpu_cores)
+    def train(self, srl_dataset: SRLDataSet, min_epochs: int = 15, max_epochs: int = 100, batch_size=128):
+        dataloader = DataLoader(srl_dataset, batch_size=batch_size, shuffle=True, num_workers=self.cpu_cores)
 
         log_every_n_steps = 10
 

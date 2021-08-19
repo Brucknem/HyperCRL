@@ -14,11 +14,14 @@ class TestSRLDataset(unittest.TestCase):
         self.dataset: SRLDataSet = SRLDataSet(transform=None)
 
         self.dimension = (128, 128, 3)
-        self.dataset.add_datapoint(0, np.zeros(self.dimension), np.zeros(7), 1)
-        self.dataset.add_datapoint(0, np.ones(self.dimension), np.ones(7), 0)
-        self.dataset.add_datapoint(0, np.ones(self.dimension), np.zeros(7), 1)
-        self.dataset.add_datapoint(0, np.ones(self.dimension), np.ones(7), 0)
-        self.dataset.add_datapoint(0, np.zeros(self.dimension), np.zeros(7), 1)
+        self.dataset.add_datapoint(0, np.zeros(self.dimension), np.zeros(7), 1)  # 0
+        index, action = self.dataset.get_known_action()
+        self.dataset.add_datapoint(0, np.ones(self.dimension), np.ones(7), 0)  # 1
+        self.dataset.add_datapoint(0, np.ones(self.dimension), action, 1)  # 2
+        self.dataset.add_datapoint(0, np.ones(self.dimension), action, 0)  # 3
+        self.dataset.add_datapoint(0, np.zeros(self.dimension), np.ones(7), 1)  # 4
+        self.dataset.add_datapoint(0, np.ones(self.dimension), action, 0)  # 5
+
         self.dataset.calculate_same_action_pairs()
 
         to_tensor = transforms.ToTensor()
@@ -36,9 +39,9 @@ class TestSRLDataset(unittest.TestCase):
 
         self.assertEqual(len(same_actions), 4)
         self.assertIn(((0, 1), (2, 3)), same_actions)
-        self.assertIn(((2, 3), (0, 1)), same_actions)
-        self.assertIn(((1, 2), (3, 4)), same_actions)
-        self.assertIn(((3, 4), (1, 2)), same_actions)
+        self.assertIn(((0, 1), (3, 4)), same_actions)
+        self.assertIn(((2, 3), (3, 4)), same_actions)
+        self.assertIn(((1, 2), (4, 5)), same_actions)
 
     def test_get(self):
         self.assertEqual(len(self.dataset), 4)
@@ -53,7 +56,7 @@ class TestSRLDataset(unittest.TestCase):
         self.assertTrue(torch.equal(entry['actions'][0][0], torch.from_numpy(np.zeros(7))))
         self.assertTrue(torch.equal(entry['actions'][0][1], torch.from_numpy(np.ones(7))))
         self.assertTrue(torch.equal(entry['actions'][1][0], torch.from_numpy(np.zeros(7))))
-        self.assertTrue(torch.equal(entry['actions'][1][1], torch.from_numpy(np.ones(7))))
+        self.assertTrue(torch.equal(entry['actions'][1][1], torch.from_numpy(np.zeros(7))))
 
         self.assertTrue(torch.equal(entry['rewards'][0][0], torch.tensor(1)))
         self.assertTrue(torch.equal(entry['rewards'][0][1], torch.tensor(0)))

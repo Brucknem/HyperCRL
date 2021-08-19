@@ -136,7 +136,8 @@ class CausalityPrior(torch.nn.Module):
     to each other in the state representation space.
     """
 
-    def forward(self, state: torch.Tensor, other_state: torch.Tensor):
+    def forward(self, state: torch.Tensor, other_state: torch.Tensor, rewards: torch.Tensor,
+                other_rewards: torch.Tensor):
         """
         Calculates the forward pass for the robotic prior.
 
@@ -147,6 +148,8 @@ class CausalityPrior(torch.nn.Module):
         Args:
             state: Some state.
             other_state: Another state.
+            rewards: The rewards at the states.
+            other_rewards: The rewards at the other states.
 
         Returns:
             The value of the robotic prior.
@@ -156,6 +159,7 @@ class CausalityPrior(torch.nn.Module):
         state_diff_norm = state_diff.norm(2, dim=1)
 
         result = torch.exp(-(state_diff_norm ** 2))
+        result = torch.where(rewards == other_rewards, torch.zeros_like(result), result)
         return result.mean()
 
 

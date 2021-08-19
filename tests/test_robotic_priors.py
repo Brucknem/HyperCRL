@@ -78,13 +78,23 @@ class TestRoboticPriors(unittest.TestCase):
         """
         state = torch.Tensor([[1] * self.dimension] * self.batch_size)
         next_state = torch.Tensor([[0] * self.dimension] * self.batch_size)
+
+        rewards = torch.tensor([0] * self.batch_size)
+        other_rewards = torch.tensor([1] * self.batch_size)
+
         causality_prior = CausalityPrior()
 
-        value = causality_prior(state, next_state)
+        value = causality_prior(state, next_state, rewards, other_rewards)
         self.assertAlmostEqual(value.item(), 0, places=4)
 
-        value = causality_prior(state, state)
+        value = causality_prior(state, state, rewards, other_rewards)
         self.assertEqual(value.item(), 1)
+
+        value = causality_prior(state, state, rewards, rewards)
+        self.assertEqual(value.item(), 0)
+
+        value = causality_prior(state, next_state, rewards, rewards)
+        self.assertEqual(value.item(), 0)
 
     def test_reference_point_prior(self) -> None:
         """
