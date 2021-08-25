@@ -220,9 +220,12 @@ class CLEnvHandler():
             from .rs import PandaDoor
             env = suite.make(env_name="PandaDoor", handle_type=DOOR_ENV[task_id][0],
                              joint_range=DOOR_ENV[task_id][1], robots=self.robot,
+                             use_camera_obs=True,
+                             has_offscreen_renderer=True,
                              controller_configs=load_controller_config(default_controller="OSC_POSE"),
+                             camera_names=["birdview", "agentview", "sideview"],
                              pose_control=True, has_renderer=render)
-            env = GymWrapper(env)
+            env = GymWrapper(env, keys=['object-state', 'robot0_robot-state',"birdview_image"])
         if not self.cl_env.startswith("lqr"):
             env.seed(self.seed)
 

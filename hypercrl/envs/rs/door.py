@@ -458,6 +458,7 @@ class PandaDoor(RobotEnv):
                 obs, _, _, _ = self.step(action * 10)
                 action = reset_pos - obs['robot0_robot-state']
 
+        self.timestep = 0
         return self._get_observation()
 
     @property
@@ -528,7 +529,7 @@ class PandaDoor(RobotEnv):
 
         for key, value in di.items():
             if str(key).endswith("_image"):
-                dii[key] = value
+                dii[key] = value.flatten()
 
         return dii
 

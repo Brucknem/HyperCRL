@@ -20,16 +20,26 @@ from gym.envs.robotics.rotations import (quat2euler, subtract_euler, quat_mul, \
 
 import hypercrl.srl
 from hypercrl.envs.rs import PandaDoor
-from hypercrl.srl import SRL, SRLTrainer, SRLDataSet
+from hypercrl.srl import SRL, SRLTrainer, SRLDataSet, ResNet18Encoder
+
+
+def reshape(img, shape):
+    return np.reshape(img.view(), shape)
+
 
 if __name__ == "__main__":
     # Create dict to hold options that will be passed to env creation call
     options = {}
 
+    side_length = 256
+    options["camera_widths"] = side_length
+    options["camera_heights"] = side_length
     options["env_name"] = "PandaDoor"
     options["handle_type"] = "lever"
     options["robots"] = "Panda"
     options["camera_names"] = ['birdview', 'frontview', 'sideview']
+    horizon = 200
+    options["horizon"] = horizon
 
     # Choose controller
     controller_name = "OSC_POSE"
@@ -67,16 +77,19 @@ if __name__ == "__main__":
     low, high = env.action_spec
     print(x_t, low, high)
 
-    srl = SRL(128)
-    srl_dataset = SRLDataSet()
+    encoder = ResNet18Encoder(128)
+    srl = SRL(encoder=encoder)
+    srl_dataset = SRLDataSet(horizon=horizon)
     trainer = SRLTrainer(srl=srl)
 
     observation_name = options["camera_names"][0] + "_image"
 
     episode = 0
 
+    shape = (side_length, side_length, 3)
+
     # do visualization
-    for i in range(20000):
+    for i in range(horizon):
         # env.render()
 
         if i % 200 == 0:
@@ -91,7 +104,9 @@ if __name__ == "__main__":
         obs, reward, done, _ = env.step(action)
         image = obs[observation_name]
 
-        srl_dataset.add_datapoint(episode=episode, observation=image, action=action, reward=reward)
+        image = reshape(image, shape)
+
+        srl_dataset.add_datapoint(observation=image, action=action, reward=reward)
 
         if done:
             episode += 1

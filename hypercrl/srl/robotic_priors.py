@@ -191,3 +191,60 @@ class ReferencePointPrior(torch.nn.Module):
 
         result = state_diff_norm ** 2
         return result.mean()
+
+
+class RoboticPriors(torch.nn.Module):
+    """
+    Wrapper for all robotic priors.
+    """
+
+    def __init__(self):
+        """
+        constructor
+        """
+        super().__init__()
+        self.slowness_prior = SlownessPrior()
+        self.variability_prior = VariabilityPrior()
+        self.proportionality_prior = ProportionalityPrior()
+        self.repeatability_prior = RepeatabilityPrior()
+        self.causality_prior = CausalityPrior()
+        self.reference_point_prior = ReferencePointPrior()
+
+    def forward(self, state: torch.Tensor, next_state: torch.Tensor, other_state: torch.Tensor,
+                other_next_state: torch.Tensor, rewards: torch.Tensor, other_rewards: torch.Tensor):
+        """
+        Calculates the robotic priors.
+
+        Args:
+            state:
+            next_state:
+            other_state:
+            other_next_state:
+            rewards:
+            other_rewards:
+
+        Returns:
+            The total loss and the robotic prior losses.
+
+        """
+        total_loss = 0
+        slowness_loss = self.slowness_prior(state, next_state) + self.slowness_prior(other_state, other_next_state)
+        total_loss += slowness_loss
+
+        variability_loss = self.variability_prior(state, other_state) + \
+                           self.variability_prior(state, other_next_state) + \
+                           self.variability_prior(other_state, next_state) + \
+                           self.variability_prior(other_next_state, next_state)
+        total_loss += variability_loss
+
+        scale = 10
+        proportionality_loss = self.proportionality_prior(state, next_state, other_state, other_next_state)
+        total_loss += scale * proportionality_loss
+
+        repeatability_loss = self.repeatability_prior(state, next_state, other_state, other_next_state)
+        total_loss += scale * repeatability_loss
+
+        causality_loss = self.causality_prior(state, other_state, rewards, other_rewards)
+        total_loss += scale * causality_loss
+
+        return total_loss, slowness_loss, variability_loss, proportionality_loss, repeatability_loss, causality_loss

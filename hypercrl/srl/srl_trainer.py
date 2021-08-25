@@ -14,7 +14,7 @@ class SRLTrainer:
     def __init__(self, srl: SRL, save_dir="srl_logs", name="srl"):
         self.srl = srl
         self.name = name
-        self.root_dir = os.path.join("../../../", save_dir)
+        self.root_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../..", save_dir)
         self.model_checkpoint_name = ''
         self.last_epoch = 0
 
