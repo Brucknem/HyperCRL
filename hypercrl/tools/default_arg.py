@@ -895,26 +895,28 @@ def default_arg_door(hparams):
 def default_arg_door_pose(hparams):
     is_vision_based = hparams.vision_params is not None
     if is_vision_based:
+        # Vision-based
+        hparams.vision_params.state_dim = 128
+        hparams.vision_params.camera_widths = 128
+        hparams.vision_params.camera_heights = 128
         hparams.state_dim = 128
+        hparams.dnn_out = "state"
     else:
         hparams.state_dim = 26
+        hparams.dnn_out = "diff"  # or "state"
+
     hparams.control_dim = 7
     hparams.out_dim = hparams.state_dim
 
-    # Vision-based
-    hparams.vision_params.state_dim = 128
-    hparams.vision_params.camera_widths = 128
-    hparams.vision_params.camera_heights = 128
-
     # Tasks
     hparams.num_tasks = 5
-    hparams.init_rand_steps = 2000
+    hparams.init_rand_steps = 200  # IMPORTANT Original: 2000
     hparams.max_iteration = 60000
     hparams.dynamics_update_every = 200
     hparams.out_var = True
 
     # Common Dynamics Model
-    hparams.dnn_out = "diff"  # or "state"
+    # hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
     hparams.h_dims = [200, 200, 200, 200]
 

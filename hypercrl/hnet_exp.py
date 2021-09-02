@@ -399,10 +399,9 @@ def play_model(hparams, runs=10):
         env.close()
 
 
-def get_image_obs(obs: np.ndarray, flattened_image_dims, image_dims):
+def get_image_obs(obs: np.ndarray, flattened_image_dims):
     img = obs[-flattened_image_dims:]
-    img = np.reshape(img, image_dims)
-    img = img.astype(np.uint8)
+    img = img / 255.
     return img
 
 
@@ -460,7 +459,7 @@ def run(hparams, render=False):
     image_dims = None
     if is_vision_based:
         image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3)
-    flattened_image_dim = image_dims[0] * image_dims[1] * image_dims[2]
+        flattened_image_dim = image_dims[0] * image_dims[1] * image_dims[2]
 
     # Start learning in environment
     envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed, image_dims=image_dims)
@@ -475,14 +474,16 @@ def run(hparams, render=False):
         print(f"Collecting some random data first for task {task_id}")
         x_t = env.reset()
         if is_vision_based:
-            x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
+            x_t = get_image_obs(x_t, flattened_image_dim)
 
         for it in range(hparams.init_rand_steps):
+            if it % 100 == 0:
+                print(f"Step: {it} / {hparams.init_rand_steps}")
             u = rand_pi.act(x_t)
             x_tt, _, done, _ = env.step(u.reshape(env.action_space.shape))
 
             if is_vision_based:
-                x_tt = get_image_obs(x_tt, flattened_image_dim, image_dims)
+                x_tt = get_image_obs(x_tt, flattened_image_dim)
 
             collector.add(x_t, u, x_tt, task_id)
             x_t = x_tt
@@ -490,7 +491,7 @@ def run(hparams, render=False):
             if done:
                 x_t = env.reset()
                 if is_vision_based:
-                    x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
+                    x_t = get_image_obs(x_t, flattened_image_dim)
 
         # Augment Model, instantiate optimizers/regularizer targets
         trainer_misc = augment_model(task_id, mnet, hnet, collector, hparams)
@@ -498,11 +499,11 @@ def run(hparams, render=False):
         # Interact with the environment
         x_t = env.reset()
         if is_vision_based:
-            x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
+            x_t = get_image_obs(x_t, flattened_image_dim)
         agent.reset()
         for it in range(hparams.max_iteration):
             if it % 20 == 0:
-                print(f"Step:", it)
+                print(f"Step: {it} / {hparams.max_iteration}")
 
             if it % hparams.dynamics_update_every == 0:
                 # Train Dynamics Model
@@ -519,7 +520,7 @@ def run(hparams, render=False):
             u_t = agent.act(x_t, task_id=task_id).detach().cpu().numpy()
             x_tt, reward, done, info = env.step(u_t.reshape(env.action_space.shape))
             if is_vision_based:
-                x_tt = get_image_obs(x_tt, flattened_image_dim, image_dims)
+                x_tt = get_image_obs(x_tt, flattened_image_dim)
 
             # Update the dataset of the env in which we're training
             collector.add(x_t, u_t, x_tt, task_id)
@@ -529,7 +530,7 @@ def run(hparams, render=False):
                 x_t = env.reset()
                 agent.reset()
                 if is_vision_based:
-                    x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
+                    x_t = get_image_obs(x_t, flattened_image_dim)
 
             logger.env_step(x_tt, reward, done, info, task_id)
 

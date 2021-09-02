@@ -129,7 +129,9 @@ def build_model_hnet(hparams, num_input=2):
         state_dim, out_dim = hparams.state_dim, hparams.out_dim
 
         # Specific environment model converts angle to [cos, sin]
-        if hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
+        if hparams.vision_params is not None:
+            pass
+        elif hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
                 or hparams.env == "door":
             state_dim = hparams.state_dim + 1
         elif hparams.env == "door_pose":
