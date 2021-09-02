@@ -1,3 +1,8 @@
+class VisionParams:
+    def __init__(self):
+        pass
+
+
 class Hparams():
     @staticmethod
     def add_hnet_hparams(hparams):
@@ -102,12 +107,15 @@ class Hparams():
         return hparams
 
 
-def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False):
+def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False, vision=False):
     hparams = Hparams()
     hparams.seed = seed if seed is not None else 2020
     hparams.save_folder = save_folder if save_folder is not None else './runs/lqr'
     hparams.resume = resume
     hparams.robot = robot
+    hparams.vision_params = None
+    if vision:
+        hparams.vision_params = VisionParams()
 
     # Common train setting
     hparams.num_ds_worker = 0
@@ -885,9 +893,18 @@ def default_arg_door(hparams):
 
 
 def default_arg_door_pose(hparams):
-    hparams.state_dim = 26
+    is_vision_based = hparams.vision_params is not None
+    if is_vision_based:
+        hparams.state_dim = 128
+    else:
+        hparams.state_dim = 26
     hparams.control_dim = 7
     hparams.out_dim = hparams.state_dim
+
+    # Vision-based
+    hparams.vision_params.state_dim = 128
+    hparams.vision_params.camera_widths = 128
+    hparams.vision_params.camera_heights = 128
 
     # Tasks
     hparams.num_tasks = 5

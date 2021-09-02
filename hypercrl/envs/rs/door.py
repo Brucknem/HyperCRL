@@ -18,8 +18,6 @@ from robosuite.models.objects import MujocoXMLObject
 from gym.envs.robotics.rotations import (quat2euler, subtract_euler, quat_mul, \
                                          quat2axisangle, quat_conjugate, quat2mat)
 
-from hypercrl.srl import SRLTrainer
-
 
 def print_quat(obs):
     print("Position in from world to EE", obs['robot0_robot-state'][:3])
@@ -458,7 +456,7 @@ class PandaDoor(RobotEnv):
                 obs, _, _, _ = self.step(action * 10)
                 action = reset_pos - obs['robot0_robot-state']
 
-        self.timestep = 0
+        # self.timestep = 0
         return self._get_observation()
 
     @property

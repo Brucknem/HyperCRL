@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import random
 import matplotlib
@@ -229,7 +230,9 @@ def augment_model_after(task_id, mnet, hnet, hparams, collector):
                            regression=True, allowed_outputs=None, out_var=hparams.out_var)
 
 
-def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
+def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder=None, encoder_hnet=None):
+    # IMPORTANT Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
+
     # Data Loader
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=hparams.bs, shuffle=True,
                                                drop_last=True, num_workers=hparams.num_ds_worker)
@@ -244,6 +247,8 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
 
     # Whether the regularizer will be computed during training?
     calc_reg = task_id > 0 and hparams.beta > 0
+
+    # TODO Add either SRL pretraining or Encoding
 
     it = 0
     while it < hparams.train_dynamic_iters:
@@ -394,6 +399,13 @@ def play_model(hparams, runs=10):
         env.close()
 
 
+def get_image_obs(obs: np.ndarray, flattened_image_dims, image_dims):
+    img = obs[-flattened_image_dims:]
+    img = np.reshape(img, image_dims)
+    img = img.astype(np.uint8)
+    return img
+
+
 def run(hparams, render=False):
     print(f'Running')
 
@@ -406,6 +418,8 @@ def run(hparams, render=False):
         random.seed(hparams.rand_aggregate_seed)
 
     if hparams.resume:
+        # IMPORTANT Reload SRL encoder
+
         # Restore model and agent
         mnet, hnet, agent, checkpoint, collector = reload_model(hparams)
 
@@ -419,6 +433,8 @@ def run(hparams, render=False):
     else:
         # Collect some random data
         collector = DataCollector(hparams)
+
+        # IMPORTANT build SRL encoder
 
         # Build model
         mnet, hnet = build_model(hparams)
@@ -439,8 +455,15 @@ def run(hparams, render=False):
     # Random Policy
     rand_pi = RandomAgent(hparams)
 
+    # Vision-Based
+    is_vision_based = hparams.vision_params is not None
+    image_dims = None
+    if is_vision_based:
+        image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3)
+    flattened_image_dim = image_dims[0] * image_dims[1] * image_dims[2]
+
     # Start learning in environment
-    envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed)
+    envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed, image_dims=image_dims)
     if hparams.resume:
         for tid in range(num_tasks_seen):
             envs.add_task(tid)
@@ -451,22 +474,36 @@ def run(hparams, render=False):
 
         print(f"Collecting some random data first for task {task_id}")
         x_t = env.reset()
+        if is_vision_based:
+            x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
+
         for it in range(hparams.init_rand_steps):
             u = rand_pi.act(x_t)
             x_tt, _, done, _ = env.step(u.reshape(env.action_space.shape))
+
+            if is_vision_based:
+                x_tt = get_image_obs(x_tt, flattened_image_dim, image_dims)
+
             collector.add(x_t, u, x_tt, task_id)
             x_t = x_tt
             logger.data_aggregate_step(x_tt, task_id, it)
             if done:
                 x_t = env.reset()
+                if is_vision_based:
+                    x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
 
         # Augment Model, instantiate optimizers/regularizer targets
         trainer_misc = augment_model(task_id, mnet, hnet, collector, hparams)
 
         # Interact with the environment
         x_t = env.reset()
+        if is_vision_based:
+            x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
         agent.reset()
         for it in range(hparams.max_iteration):
+            if it % 20 == 0:
+                print(f"Step:", it)
+
             if it % hparams.dynamics_update_every == 0:
                 # Train Dynamics Model
                 ts = time.time()
@@ -481,14 +518,18 @@ def run(hparams, render=False):
             # Run MPC
             u_t = agent.act(x_t, task_id=task_id).detach().cpu().numpy()
             x_tt, reward, done, info = env.step(u_t.reshape(env.action_space.shape))
+            if is_vision_based:
+                x_tt = get_image_obs(x_tt, flattened_image_dim, image_dims)
 
-            # Update the dataset of the env in which we're training 
+            # Update the dataset of the env in which we're training
             collector.add(x_t, u_t, x_tt, task_id)
             x_t = x_tt
 
             if done:
                 x_t = env.reset()
                 agent.reset()
+                if is_vision_based:
+                    x_t = get_image_obs(x_t, flattened_image_dim, image_dims)
 
             logger.env_step(x_tt, reward, done, info, task_id)
 
@@ -514,9 +555,9 @@ def chunked_hnet(env, seed=None, savepath=None, play=False):
         run(hparams)
 
 
-def hnet(env, robot="Panda", seed=None, savepath=None, resume=False, render=False, play=False, runs=10):
+def hnet(env, robot="Panda", seed=None, savepath=None, resume=False, render=False, play=False, runs=10, vision=False):
     # Hyperparameters
-    hparams = HP(env=env, robot=robot, seed=seed, save_folder=savepath, resume=resume)
+    hparams = HP(env=env, robot=robot, seed=seed, save_folder=savepath, resume=resume, vision=vision)
     hparams.model = "hnet"
 
     hparams = Hparams.add_hnet_hparams(hparams)

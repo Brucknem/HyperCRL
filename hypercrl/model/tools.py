@@ -9,9 +9,10 @@ from .regularizer import BaselineReg
 from hypercrl.tools import MonitorRL, MonitorHnet, str_to_act, Hparams
 from hypercrl.control import MPC
 
-from hypercrl.hypercl import HyperNetwork, MLP, ChunkedHyperNetworkHandler, MainNetInterface
+from hypercrl.hypercl import HyperNetwork, MLP, ChunkedHyperNetworkHandler, MainNetInterface, ResNet
 from hypercrl.hypercl.utils import ewc_regularizer as ewc
 from hypercrl.hypercl.utils import si_regularizer as si
+
 
 def get_recon_loss(decoder_out, X, dist, reduction='sum', weight=1):
     if dist == "bernoulli":
@@ -22,13 +23,14 @@ def get_recon_loss(decoder_out, X, dist, reduction='sum', weight=1):
         err = (X - mu) * torch.exp(-logscale)
         loss = 0.5 * err * err + logscale + 0.5 * np.log(np.pi * 2)
 
-        if reduction=='sum':
+        if reduction == 'sum':
             loss = torch.sum(loss) * weight
-        elif reduction=='batch_mean':
+        elif reduction == 'batch_mean':
             loss = torch.sum(loss) / X.size(0) * weight
-        elif reduction=='mean':
+        elif reduction == 'mean':
             loss = torch.mean(loss) * weight
     return loss
+
 
 def get_dual_loss(T_q, T_p, reduction='mean'):
     loss_q = F.binary_cross_entropy_with_logits(T_q, torch.ones_like(T_q), reduction=reduction)
@@ -37,8 +39,10 @@ def get_dual_loss(T_q, T_p, reduction='mean'):
     loss = loss_p + loss_q
     return loss
 
+
 def log_normal(x, mu, logs, axis=-1):
     return -0.5 * torch.sum((x - mu).pow(2) * (-logs).exp() + logs + np.log(2 * np.pi), axis)
+
 
 #######################  Model UTIL ####################################
 
@@ -47,7 +51,7 @@ def build_model(hparams):
 
     # Specific environment model converts angle to [cos, sin]
     if hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
-        or hparams.env == "door":
+            or hparams.env == "door":
         import copy
         hparams = copy.deepcopy(hparams)
         hparams.state_dim = hparams.state_dim + 1
@@ -72,6 +76,7 @@ def build_model(hparams):
 
     return model
 
+
 def reload_model(hparams, task_id=None):
     model = build_model(hparams)
     # Restore Data
@@ -81,10 +86,10 @@ def reload_model(hparams, task_id=None):
     # Load Checkpoint
     if task_id is None:
         model_path = os.path.join(hparams.save_folder,
-            f'TB{hparams.env}_{hparams.model}_{hparams.seed}', 'model.pt')
+                                  f'TB{hparams.env}_{hparams.model}_{hparams.seed}', 'model.pt')
     else:
         model_path = os.path.join(hparams.save_folder,
-            f'TB{hparams.env}_{hparams.model}_{hparams.seed}', f'model_{task_id}.pt')     
+                                  f'TB{hparams.env}_{hparams.model}_{hparams.seed}', f'model_{task_id}.pt')
     checkpoint = torch.load(model_path, map_location=hparams.gpuid)
     print("Checkpoint Loaded")
 
@@ -115,6 +120,7 @@ def reload_model(hparams, task_id=None):
 
     return model, agent, checkpoint, collector
 
+
 ####################### HNET Model UTIL ####################################
 
 def build_model_hnet(hparams, num_input=2):
@@ -124,7 +130,7 @@ def build_model_hnet(hparams, num_input=2):
 
         # Specific environment model converts angle to [cos, sin]
         if hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
-            or hparams.env == "door":
+                or hparams.env == "door":
             state_dim = hparams.state_dim + 1
         elif hparams.env == "door_pose":
             state_dim = hparams.state_dim + 2
@@ -133,40 +139,40 @@ def build_model_hnet(hparams, num_input=2):
         input_dim, out_dim = hparams.in_dim, hparams.out_dim
 
     mnet = MLP(n_in=input_dim,
-             n_out=out_dim, hidden_layers=hparams.h_dims, 
-             no_weights=True, out_var=hparams.out_var,
-             mlp_var_minmax=hparams.mlp_var_minmax)
-    
+               n_out=out_dim, hidden_layers=hparams.h_dims,
+               no_weights=True, out_var=hparams.out_var,
+               mlp_var_minmax=hparams.mlp_var_minmax)
+
     print('Constructed MLP with shapes: ', mnet.param_shapes)
 
     if hparams.model == "chunked_hnet":
         hnet = ChunkedHyperNetworkHandler(mnet.param_shapes,
-                chunk_dim=hparams.chunk_dim,
-                layers=hparams.hnet_arch,
-                activation_fn=str_to_act(hparams.hnet_act),
-                te_dim=hparams.emb_size,
-                ce_dim=hparams.cemb_size,
-        )
+                                          chunk_dim=hparams.chunk_dim,
+                                          layers=hparams.hnet_arch,
+                                          activation_fn=str_to_act(hparams.hnet_act),
+                                          te_dim=hparams.emb_size,
+                                          ce_dim=hparams.cemb_size,
+                                          )
     else:
-        #num_weights_class_net = MLP.shapes_to_num_weights(mnet.param_shapes)
+        # num_weights_class_net = MLP.shapes_to_num_weights(mnet.param_shapes)
         hnet = HyperNetwork(mnet.param_shapes,
-                layers=hparams.hnet_arch,
-                te_dim=hparams.emb_size,
-                activation_fn=str_to_act(hparams.hnet_act)
-        )
+                            layers=hparams.hnet_arch,
+                            te_dim=hparams.emb_size,
+                            activation_fn=str_to_act(hparams.hnet_act)
+                            )
     init_params = list(hnet.parameters())
 
     # Calculate compression ratio
     if isinstance(hparams, Hparams):
         hparams.num_weights_class_hyper_net = sum(p.numel() for p in
-                                        hnet.parameters() if p.requires_grad)
+                                                  hnet.parameters() if p.requires_grad)
         hparams.num_weights_class_net = MainNetInterface.shapes_to_num_weights(mnet.param_shapes)
         hparams.compression_ratio_class = hparams.num_weights_class_hyper_net / \
-                                                hparams.num_weights_class_net
+                                          hparams.num_weights_class_net
     print('Created hypernetwork with ratio: ', hparams.compression_ratio_class)
     ### Initialize network weights.
     for W in init_params:
-        if W.ndimension() == 1: # Bias vector.
+        if W.ndimension() == 1:  # Bias vector.
             torch.nn.init.constant_(W, 0)
         elif hparams.hnet_init == "normal":
             torch.nn.init.normal_(W, mean=0, std=hparams.std_normal_init)
@@ -179,9 +185,10 @@ def build_model_hnet(hparams, num_input=2):
 
     if hparams.use_hyperfan_init:
         if hparams.model.startswith("hnet"):
-            hnet.apply_hyperfan_init(temb_var=hparams.std_normal_temb**2)
+            hnet.apply_hyperfan_init(temb_var=hparams.std_normal_temb ** 2)
 
     return mnet, hnet
+
 
 def reload_model_hnet(hparams, task_id=None, num_input=2):
     mnet, hnet = build_model_hnet(hparams, num_input=num_input)
@@ -192,10 +199,10 @@ def reload_model_hnet(hparams, task_id=None, num_input=2):
     # Load Checkpoint
     if task_id is None:
         model_path = os.path.join(hparams.save_folder,
-            f'TB{hparams.env}_{hparams.model}_{hparams.seed}', 'model.pt')
+                                  f'TB{hparams.env}_{hparams.model}_{hparams.seed}', 'model.pt')
     else:
         model_path = os.path.join(hparams.save_folder,
-            f'TB{hparams.env}_{hparams.model}_{hparams.seed}', f'model_{task_id}.pt')     
+                                  f'TB{hparams.env}_{hparams.model}_{hparams.seed}', f'model_{task_id}.pt')
 
     checkpoint = torch.load(model_path, map_location=hparams.gpuid)
     print("Checkpoint Loaded")
@@ -203,7 +210,7 @@ def reload_model_hnet(hparams, task_id=None, num_input=2):
     # Remove potentially unwanted data collector datas
     for tid in range(checkpoint['num_tasks_seen'], hparams.num_tasks):
         try:
-            collector.states.pop(tid) 
+            collector.states.pop(tid)
             collector.actions.pop(tid)
             collector.nexts.pop(tid)
             collector.train_inds.pop(tid)

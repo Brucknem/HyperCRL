@@ -120,11 +120,15 @@ class EnvSpecs():
 
 
 class CLEnvHandler():
-    def __init__(self, env, robot, seed):
+    def __init__(self, env, robot, seed, image_dims=None):
         self.cl_env = env
         self.seed = seed
         self.robot = robot
-
+        self.vision_based = image_dims is not None
+        if self.vision_based:
+            self.image_dims = image_dims
+        else:
+            self.image_dims = [1, 1]
         self._envs = []
         self._env_mt_world = None
 
@@ -220,12 +224,18 @@ class CLEnvHandler():
             from .rs import PandaDoor
             env = suite.make(env_name="PandaDoor", handle_type=DOOR_ENV[task_id][0],
                              joint_range=DOOR_ENV[task_id][1], robots=self.robot,
-                             use_camera_obs=True,
-                             has_offscreen_renderer=True,
+                             use_object_obs=not self.vision_based,
+                             use_camera_obs=self.vision_based,
+                             has_offscreen_renderer=self.vision_based,
                              controller_configs=load_controller_config(default_controller="OSC_POSE"),
-                             camera_names=["birdview", "agentview", "sideview"],
+                             camera_names=["birdview"],
+                             camera_widths=self.image_dims[0],
+                             camera_heights=self.image_dims[1],
                              pose_control=True, has_renderer=render)
-            env = GymWrapper(env, keys=['object-state', 'robot0_robot-state',"birdview_image"])
+            keys = ['object-state', 'robot0_robot-state']
+            if self.vision_based:
+                keys.append("birdview_image")
+            env = GymWrapper(env, keys=keys)
         if not self.cl_env.startswith("lqr"):
             env.seed(self.seed)
 
