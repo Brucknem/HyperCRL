@@ -893,24 +893,15 @@ def default_arg_door(hparams):
 
 
 def default_arg_door_pose(hparams):
-    is_vision_based = hparams.vision_params is not None
-    if is_vision_based:
-        # Vision-based
-        hparams.vision_params.state_dim = 128
-        hparams.vision_params.camera_widths = 128
-        hparams.vision_params.camera_heights = 128
-        hparams.state_dim = 128
-        hparams.dnn_out = "state"
-    else:
-        hparams.state_dim = 26
-        hparams.dnn_out = "diff"  # or "state"
+    hparams.state_dim = 26
+    hparams.dnn_out = "diff"  # or "state"
 
     hparams.control_dim = 7
     hparams.out_dim = hparams.state_dim
 
     # Tasks
     hparams.num_tasks = 5
-    hparams.init_rand_steps = 200  # IMPORTANT Original: 2000
+    hparams.init_rand_steps = 2000  # IMPORTANT Original: 2000
     hparams.max_iteration = 60000
     hparams.dynamics_update_every = 200
     hparams.out_var = True
@@ -933,8 +924,8 @@ def default_arg_door_pose(hparams):
     hparams.M = 600
 
     # RL Eval setting
-    hparams.eval_env_run_every = 1000
-    hparams.run_eval_env_eps = 1
+    hparams.eval_env_run_every = 1000  # IMPORTANT 1000
+    hparams.run_eval_env_eps = 1  # IMPORTANT 1
 
     # RL Planning
     hparams.control = "mpc-cem"
@@ -944,12 +935,27 @@ def default_arg_door_pose(hparams):
 
     # CEM
     hparams.n_sim_steps = 5  # Number of search steps
-    hparams.n_sim_particles = 2000  # Number of traj to sample(in cem and mppi)
+    hparams.n_sim_particles = 2000  # IMPORTANT 2000 # Number of traj to sample(in cem and mppi)
     hparams.num_cem_elites = 40
 
     # PDDM
     hparams.pddm_beta = 0.6
     hparams.pddm_kappa = 50
     hparams.mag_noise = 0.5
+
+    # Vision-Based
+    is_vision_based = hparams.vision_params is not None
+    if is_vision_based:
+        hparams.state_dim = 128
+        hparams.out_dim = hparams.state_dim
+        hparams.dnn_out = "state"
+        hparams.normalize_xu = False
+
+        hparams.vision_params.camera_widths = 224
+        hparams.vision_params.camera_heights = 224
+
+        hparams.vision_params.in_dim = 512
+        hparams.vision_params.hdims = [200, 200]
+        hparams.vision_params.out_var = True
 
     return hparams

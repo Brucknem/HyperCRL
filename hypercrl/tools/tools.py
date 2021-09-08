@@ -300,8 +300,9 @@ class MonitorRL(MonitorBase):
         self.rl_stats = [{"step": [], "reward": [], "time": [], "diff": []} for _ in range(self.num_envs)]
         self.rewards = []
 
+        self.is_vision_based = hparams.vision_params is not None
         image_dims = None
-        if hparams.vision_params is not None:
+        if self.is_vision_based:
             image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
         self.eval_envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed, image_dims=image_dims)
         for task_id in range(hparams.num_tasks):
@@ -318,11 +319,11 @@ class MonitorRL(MonitorBase):
             print(f"Step: {self.env_iter}, Reward: {eprew:.3f}, Episode Length {eplen}")
             self.rewards = []
 
-        if self.env_iter % self.eval_env_run_every == 0:
+        if not self.is_vision_based and self.env_iter % self.eval_env_run_every == 0:
             self.run_eval_env(task_id)
 
         # Log dataset norm statistic
-        if self.env_iter % self.eval_env_run_every == 0:
+        if not self.is_vision_based and self.env_iter % self.eval_env_run_every == 0:
             self.log_xu_norm(task_id)
 
     def log_xu_norm(self, task_id):

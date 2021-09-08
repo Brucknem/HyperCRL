@@ -89,7 +89,7 @@ class CEM():
         self.nu = nu
 
         self.mean = None
-        #self.cov = None
+        # self.cov = None
         self.std = None
 
         self.F = dynamics
@@ -118,7 +118,7 @@ class CEM():
         # action distribution, initialized as N(0,I)
         # we do Hp x 1 instead of H x p because covariance will be Hp x Hp matrix instead of some higher dim tensor
         self.mean = torch.zeros(self.T * self.nu, device=self.d, dtype=self.dtype)
-        #self.cov = torch.eye(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
+        # self.cov = torch.eye(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
         self.std = torch.ones(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
 
     def _bound_samples(self, samples):
@@ -135,10 +135,12 @@ class CEM():
     def _evaluate_trajectories(self, samples, init_state, task_id):
         cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
         state = init_state.view(1, -1).repeat(self.K, 1)
+
         for t in range(self.T):
             u = samples[:, self._slice_control(t)]
-            state = self.F(state, u, task_id)
+            state = self.F(state, u, task_id, t == 0)
             cost_total += self.running_cost(state, u, t, task_id)
+
         if self.terminal_state_cost:
             cost_total += self.terminal_state_cost(state)
         return cost_total
@@ -146,8 +148,8 @@ class CEM():
     def _sample_top_trajectories(self, state, num_elite, task_id):
         # sample K action trajectories
         # in case it's singular
-        #self.action_distribution = MultivariateNormal(self.mean, covariance_matrix=self.cov)
-        #samples = self.action_distribution.sample((self.K,))
+        # self.action_distribution = MultivariateNormal(self.mean, covariance_matrix=self.cov)
+        # samples = self.action_distribution.sample((self.K,))
 
         samples = self.mean + self.std * torch.randn(self.K, self.T * self.nu, device=self.d, dtype=self.dtype)
         # bound to control maximums
@@ -166,6 +168,8 @@ class CEM():
 
         self.reset()
 
+        # IMPORTANT This loop is slow, but w/ and w/o vision
+        ts = time.time()
         for m in range(self.M):
             top_samples = self._sample_top_trajectories(state, self.num_elite, task_id)
             # fit the gaussian to those samples
@@ -174,6 +178,7 @@ class CEM():
             # self.cov = pytorch_cov(top_samples, rowvar=False)
             # if torch.matrix_rank(self.cov) < self.cov.shape[0]:
             #     self.cov += self.cov_reg
+        # print(f'Per command loop time: {ts - time.time()} s')
 
         if self.choose_best:
             top_sample = self._sample_top_trajectories(state, 1, task_id)

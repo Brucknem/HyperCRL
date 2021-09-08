@@ -1,4 +1,7 @@
+import time
+
 import torch
+import torchvision
 from torch.nn import functional as F
 import numpy as np
 
@@ -123,29 +126,55 @@ def reload_model(hparams, task_id=None):
 
 ####################### HNET Model UTIL ####################################
 
-def build_model_hnet(hparams, num_input=2):
-    if num_input == 2:
-        # Build Dynamics Model and loss
-        state_dim, out_dim = hparams.state_dim, hparams.out_dim
+class EncoderModel:
+    def __init__(self, mnet, hparams):
+        self.feature_extractor = torchvision.models.resnet18(pretrained=True)
+        # self.feature_extractor = torchvision.models.vgg16(pretrained=True)
+        self.feature_extractor.fc = torch.nn.Identity()
+        # self.feature_extractor.classifier[6] = torch.nn.Identity()
+        for params in self.feature_extractor.parameters():
+            params.requires_grad = False  #
+        self.feature_extractor.eval()
 
-        # Specific environment model converts angle to [cos, sin]
-        if hparams.vision_params is not None:
-            pass
-        elif hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
-                or hparams.env == "door":
-            state_dim = hparams.state_dim + 1
-        elif hparams.env == "door_pose":
-            state_dim = hparams.state_dim + 2
-        input_dim = state_dim + hparams.control_dim
-    else:
-        input_dim, out_dim = hparams.in_dim, hparams.out_dim
+        self.mnet = mnet
+        self.image_shape = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
 
-    mnet = MLP(n_in=input_dim,
-               n_out=out_dim, hidden_layers=hparams.h_dims,
+    def to(self, gpuid):
+        self.feature_extractor.to(gpuid)
+        self.mnet.to(gpuid)
+
+    def train(self, train=True):
+        self.feature_extractor.eval()
+        self.mnet.train(train)
+
+    def eval(self):
+        self.train(False)
+
+    def forward(self, x, weights):
+        ts = time.time()
+        if len(x.shape) == 1:
+            x = x.reshape((-1, *x.shape))
+        x = x.reshape(self.image_shape)
+        x = self.feature_extractor(x)
+        x = self.mnet.forward(x, weights)
+        # print(f'Encoding Time: {ts - time.time()} s')
+        return x
+
+
+def build_vision_model_hnet(hparams):
+    if hparams.vision_params is None:
+        return None, None
+
+    # IMPORTANT build SRL encoder
+
+    state_dim, hdims = hparams.state_dim, hparams.vision_params.hdims
+
+    mnet = MLP(n_in=512,
+               n_out=state_dim, hidden_layers=hparams.h_dims,
                no_weights=True, out_var=hparams.out_var,
                mlp_var_minmax=hparams.mlp_var_minmax)
 
-    print('Constructed MLP with shapes: ', mnet.param_shapes)
+    print('Constructed Vision MLP with shapes: ', mnet.param_shapes)
 
     if hparams.model == "chunked_hnet":
         hnet = ChunkedHyperNetworkHandler(mnet.param_shapes,
@@ -189,11 +218,98 @@ def build_model_hnet(hparams, num_input=2):
         if hparams.model.startswith("hnet"):
             hnet.apply_hyperfan_init(temb_var=hparams.std_normal_temb ** 2)
 
-    return mnet, hnet
+    return EncoderModel(mnet, hparams), hnet
+
+
+def build_model_hnet(hparams, num_input=2):
+    if num_input == 2:
+        # Build Dynamics Model and loss
+        state_dim, out_dim = hparams.state_dim, hparams.out_dim
+
+        # Specific environment model converts angle to [cos, sin]
+        if hparams.vision_params is not None:
+            pass
+        elif hparams.env.startswith("inverted_pendulum") or hparams.env.startswith('cartpole') \
+                or hparams.env == "door":
+            state_dim = hparams.state_dim + 1
+        elif hparams.env == "door_pose":
+            state_dim = hparams.state_dim + 2
+        input_dim = state_dim + hparams.control_dim
+    else:
+        input_dim, out_dim = hparams.in_dim, hparams.out_dim
+
+    mnet = MLP(n_in=input_dim,
+               n_out=out_dim, hidden_layers=hparams.h_dims,
+               no_weights=True, out_var=hparams.out_var,
+               mlp_var_minmax=hparams.mlp_var_minmax)
+
+    print('Constructed MLP with shapes: ', mnet.param_shapes)
+    param_shapes = mnet.param_shapes
+    params_split = len(param_shapes)
+
+    if hparams.vision_params is not None:
+        encoder_mnet = MLP(n_in=hparams.vision_params.in_dim,
+                           n_out=hparams.state_dim, hidden_layers=hparams.vision_params.hdims,
+                           no_weights=True, out_var=hparams.vision_params.out_var,
+                           mlp_var_minmax=hparams.mlp_var_minmax)
+
+        print('Constructed Vision MLP with shapes: ', encoder_mnet.param_shapes)
+        param_shapes = param_shapes + encoder_mnet.param_shapes
+        encoder_mnet = EncoderModel(encoder_mnet, hparams)
+
+    else:
+        encoder_mnet = None
+
+    if hparams.model == "chunked_hnet":
+        hnet = ChunkedHyperNetworkHandler(param_shapes,
+                                          chunk_dim=hparams.chunk_dim,
+                                          layers=hparams.hnet_arch,
+                                          activation_fn=str_to_act(hparams.hnet_act),
+                                          te_dim=hparams.emb_size,
+                                          ce_dim=hparams.cemb_size,
+                                          )
+    else:
+        # num_weights_class_net = MLP.shapes_to_num_weights(mnet.param_shapes)
+        hnet = HyperNetwork(param_shapes,
+                            layers=hparams.hnet_arch,
+                            te_dim=hparams.emb_size,
+                            activation_fn=str_to_act(hparams.hnet_act)
+                            )
+    init_params = list(hnet.parameters())
+
+    # Calculate compression ratio
+    if isinstance(hparams, Hparams):
+        hparams.num_weights_class_hyper_net = sum(p.numel() for p in
+                                                  hnet.parameters() if p.requires_grad)
+        hparams.num_weights_class_net = MainNetInterface.shapes_to_num_weights(param_shapes)
+        hparams.compression_ratio_class = hparams.num_weights_class_hyper_net / \
+                                          hparams.num_weights_class_net
+    print('Created hypernetwork with ratio: ', hparams.compression_ratio_class)
+    ### Initialize network weights.
+    for W in init_params:
+        if W.ndimension() == 1:  # Bias vector.
+            torch.nn.init.constant_(W, 0)
+        elif hparams.hnet_init == "normal":
+            torch.nn.init.normal_(W, mean=0, std=hparams.std_normal_init)
+        elif hparams.hnet_init == "xavier":
+            torch.nn.init.xavier_uniform_(W)
+
+    if hasattr(hnet, 'chunk_embeddings'):
+        for emb in hnet.chunk_embeddings:
+            torch.nn.init.normal_(emb, mean=0, std=hparams.std_normal_cemb)
+
+    if hparams.use_hyperfan_init:
+        if hparams.model.startswith("hnet"):
+            hnet.apply_hyperfan_init(temb_var=hparams.std_normal_temb ** 2)
+
+    return mnet, hnet, encoder_mnet, params_split
 
 
 def reload_model_hnet(hparams, task_id=None, num_input=2):
-    mnet, hnet = build_model_hnet(hparams, num_input=num_input)
+    mnet, hnet, encoder_mnet, params_split = build_model_hnet(hparams, num_input=num_input)
+
+    is_vision_based = hparams.vision_params is not None
+
     # Restore Data
     collector = MonitorRL.resume_from_disk(hparams)
     agent = MPC(hparams, mnet, hnet=hnet, collector=collector)
@@ -208,6 +324,10 @@ def reload_model_hnet(hparams, task_id=None, num_input=2):
 
     checkpoint = torch.load(model_path, map_location=hparams.gpuid)
     print("Checkpoint Loaded")
+
+    # IMPORTANT Load encoder checkpoint
+    print("Encoder Checkpoint Not Loaded!")
+    encoder_mnet = EncoderModel(encoder_mnet, hparams)
 
     # Remove potentially unwanted data collector datas
     for tid in range(checkpoint['num_tasks_seen'], hparams.num_tasks):
@@ -239,4 +359,4 @@ def reload_model_hnet(hparams, task_id=None, num_input=2):
     hnet.to(hparams.gpuid)
     print("Hnet restored")
 
-    return mnet, hnet, agent, checkpoint, collector
+    return mnet, hnet, agent, checkpoint, collector, encoder_mnet, params_split

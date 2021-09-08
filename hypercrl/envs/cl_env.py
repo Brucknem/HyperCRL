@@ -234,7 +234,7 @@ class CLEnvHandler():
                              pose_control=True, has_renderer=render)
             keys = ['object-state', 'robot0_robot-state']
             if self.vision_based:
-                keys.append("birdview_image")
+                keys = ["birdview_image"]
             env = GymWrapper(env, keys=keys)
         if not self.cl_env.startswith("lqr"):
             env.seed(self.seed)

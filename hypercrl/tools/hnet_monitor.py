@@ -1,12 +1,20 @@
 import torch
 from .tools import MonitorRL
 
+
 class MonitorHnet(MonitorRL):
-    def __init__(self, hparams, agent, mnet, hnet, collector):
+    def __init__(self, hparams, agent, mnet, hnet, collector, encoder=None, params_split=-1):
         super(MonitorHnet, self).__init__(hparams, agent, mnet, collector, None)
         self.mnet = mnet
         self.hnet = hnet
         self.model_to_save = {'mnet': mnet, 'hnet': hnet}
+
+        self.is_vision_based = hparams.vision_params is not None
+        self.encoder = None
+        if self.is_vision_based:
+            self.model_to_save["encoder"] = encoder
+            self.encoder = encoder
+        self.params_split = params_split
 
         self.loss_task = 0
         self.loss_reg = 0
@@ -18,7 +26,7 @@ class MonitorHnet(MonitorRL):
             self.loss_task /= self.print_train_every
             self.loss_reg /= self.print_train_every
             loss_tot = self.loss_reg + self.loss_task
-            print(f"Batch: {self.train_iter}, Loss: {loss_tot:.5f}, " + 
+            print(f"Batch: {self.train_iter}, Loss: {loss_tot:.5f}, " +
                   f"Task L: {self.loss_task:.5f}, Reg L: {self.loss_reg:.5f}")
 
             i = self.train_iter
@@ -32,12 +40,12 @@ class MonitorHnet(MonitorRL):
             if grad_tloss is not None:
                 (grad_tloss, grad_full, grad_diff_norm, grad_cos) = grad_tloss
                 self.writer.add_scalar('train/full_grad_norm',
-                                  torch.norm(grad_full, 2), i)
+                                       torch.norm(grad_full, 2), i)
                 self.writer.add_scalar('train/reg_grad_norm',
-                                  grad_diff_norm, i)
+                                       grad_diff_norm, i)
                 self.writer.add_scalar('train/cosine_task_reg',
-                                  grad_cos, i)
-            
+                                       grad_cos, i)
+
             self.loss_task = 0
             self.loss_reg = 0
 
@@ -56,35 +64,45 @@ class MonitorHnet(MonitorRL):
     def validate_task(self, task_id, loader, mll, is_training=False):
         self.mnet.eval()
         self.hnet.eval()
+        self.is_vision_based and self.encoder.eval()
+
         gpuid = self.hparams.gpuid
-        
+
         # Initialize Stats
         val_loss = 0
         val_diff = 0
         N = len(loader)
-        
+
         with torch.no_grad():
             weights = self.hnet.forward(task_id)
+            mnet_weights, encoder_weights = weights[:self.params_split], weights[self.params_split:]
 
             for _, data in enumerate(loader):
                 x_t, a_t, x_tt = data
                 x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
+
+                if self.is_vision_based:
+                    x_t = self.encoder.forward(x_t, encoder_weights)
+                    x_t, x_t_var = torch.split(x_t, x_t.size(-1) // 2, dim=-1)
+                    x_tt = self.encoder.forward(x_tt, encoder_weights)
+                    x_tt, x_tt_var = torch.split(x_tt, x_tt.size(-1) // 2, dim=-1)
+
                 X = torch.cat((x_t, a_t), dim=-1)
-                
-                Y = self.mnet.forward(X, weights)
-                
-                loss = mll(Y, x_tt, weights)
+
+                Y = self.mnet.forward(X, mnet_weights)
+
+                loss = mll(Y, x_tt, mnet_weights)
                 if self.hparams.out_var:
-                    Y, _ = torch.split(Y, Y.size(-1)//2, dim=-1)
+                    Y, _ = torch.split(Y, Y.size(-1) // 2, dim=-1)
                 diff = torch.abs(Y - x_tt).mean(dim=0)
-                
+
                 val_loss += loss
                 val_diff += diff
-            
+
             val_loss = val_loss / N
             val_diff = val_diff / N
 
         print(f"Iter {self.train_iter}, Task: {task_id}, " + \
               f"Val Loss: {val_loss.item():.5f}, Val Diff: {val_diff.mean().item()}")
-        
+
         return val_loss, val_diff
