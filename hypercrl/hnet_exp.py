@@ -263,6 +263,8 @@ def augment_model_after(task_id, mnet, hnet, hparams, collector):
 def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder_mnet=None, params_split=-1):
     # IMPORTANT Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
 
+    print("Training")
+
     # Data Loader
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=hparams.bs, shuffle=True,
                                                drop_last=True, num_workers=hparams.num_ds_worker)
@@ -275,8 +277,6 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder
     targets, mll, theta_optimizer, emb_optimizer, regularized_params, fisher_ests, si_omega = trainer_misc
 
     is_vision_based = hparams.vision_params is not None
-    image_shape = () if not is_vision_based else \
-        (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
 
     # Whether the regularizer will be computed during training?
     calc_reg = task_id > 0 and hparams.beta > 0
@@ -460,7 +460,8 @@ def get_image_obs(obs: np.ndarray, hparams):
     flattened_image_dims = w * h * 3
     img = obs[-flattened_image_dims:]
     # IMPORTANT don't normalize here, convert to uint8 as much smaller memory
-    img = img / 255.
+    # img = img / 255.
+    img = img.astype(np.uint8)
     cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
     cv2.waitKey(1)
     # print(f'Get image obs time: {ts - time.time()} s')
@@ -556,12 +557,10 @@ def run(hparams, render=False):
 
         weights = hnet.forward(task_id)
         mnet_weights, encoder_weights = weights[:params_split], weights[params_split:]
+        encoder_times, act_times = [0], [0]
 
         agent.reset()
         for it in range(hparams.max_iteration):
-            if it % 20 == 0:
-                print(f"Step: {it} / {hparams.max_iteration}")
-
             if it % hparams.dynamics_update_every == 0:
                 cv2.destroyAllWindows()
                 # IMPORTANT Maybe split training in SRL and RL
@@ -572,7 +571,16 @@ def run(hparams, render=False):
                 ts = time.time()
                 train_set, _ = collector.get_dataset(task_id)
                 train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder_mnet, params_split)
-                print(f"Training time", time.time() - ts)
+                train_time = time.time() - ts
+                print(f"Training time", train_time)
+
+                logger.writer.add_scalar('train/time', train_time, it)
+                logger.writer.add_scalar('misc/encode_time', np.mean(encoder_times), it)
+                logger.writer.add_scalar('misc/act_time', np.mean(act_times), it)
+                encoder_times, act_times = [], []
+
+            if it % 20 == 0:
+                print(f"Step: {it} / {hparams.max_iteration}")
 
             if render:
                 env.render()
@@ -582,9 +590,14 @@ def run(hparams, render=False):
 
             # Run MPC
             if is_vision_based:
+                encode_time = time.time()
                 x_t_hat = encoder_mnet.forward(torch.from_numpy(x_t).float().to(hparams.gpuid), encoder_weights)
                 x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
+                encoder_times.append(time.time() - encode_time)
+
+                act_time = time.time()
                 u_t = agent.act(x_t_hat, task_id=task_id).detach().cpu().numpy()
+                act_times.append(time.time() - act_time)
             else:
                 u_t = agent.act(x_t, task_id=task_id).detach().cpu().numpy()
 

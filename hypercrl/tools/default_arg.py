@@ -943,6 +943,8 @@ def default_arg_door_pose(hparams):
     hparams.pddm_kappa = 50
     hparams.mag_noise = 0.5
 
+    hparams.collector_max_capacity = -1
+
     # Vision-Based
     is_vision_based = hparams.vision_params is not None
     if is_vision_based:
@@ -953,9 +955,10 @@ def default_arg_door_pose(hparams):
 
         hparams.vision_params.camera_widths = 224
         hparams.vision_params.camera_heights = 224
+        hparams.collector_max_capacity = 5000
 
         hparams.vision_params.in_dim = 512
-        hparams.vision_params.hdims = [200, 200]
+        hparams.vision_params.hdims = [200, 200, 200, 200]
         hparams.vision_params.out_var = True
 
     return hparams

@@ -49,6 +49,7 @@ class DataCollector():
         self.env_name = hparams.env
 
         self.is_vision_based = hparams.vision_params is not None
+        self.max_capacity = hparams.collector_max_capacity
 
     def num_tasks(self):
         return len(self.states)
@@ -127,6 +128,7 @@ class DataCollector():
                 self.a_aggregate[task_id] = self.update((0, 0, 0), u)
         # Train or val
         is_train = (random.random() <= 0.75)
+
         ind = len(self.states[task_id]) - 1
         if is_train:
             if task_id in self.train_inds:
@@ -138,6 +140,33 @@ class DataCollector():
                 self.val_inds[task_id].append(ind)
             else:
                 self.val_inds[task_id] = [ind]
+
+        self.delete_on_max_capacity(task_id)
+
+    def delete_on_max_capacity(self, task_id):
+        if self.max_capacity <= 0:
+            return
+
+        while len(self.states[task_id]) > self.max_capacity:
+            is_train = True if len(self.val_inds[task_id]) <= 0 else (
+                False if len(self.train_inds[task_id]) <= 0 else random.random() <= 0.75)
+            if is_train:
+                idx = np.random.randint(0, max(1, len(self.train_inds[task_id]) // 2))
+                elem = self.train_inds[task_id][idx]
+                del self.train_inds[task_id][idx]
+            else:
+                idx = np.random.randint(0, max(1, len(self.val_inds[task_id]) // 2))
+                elem = self.val_inds[task_id][idx]
+                del self.val_inds[task_id][idx]
+
+            self.train_inds[task_id] = list(map(lambda x: x if x < elem else x - 1, self.train_inds[task_id]))
+            self.val_inds[task_id] = list(map(lambda x: x if x < elem else x - 1, self.val_inds[task_id]))
+
+            del self.states[task_id][elem]
+            del self.actions[task_id][elem]
+            del self.nexts[task_id][elem]
+
+        # print(len(self.states[task_id]))
 
     def finalize(self, task_id):
         def one(existingAggregate):

@@ -139,6 +139,12 @@ class EncoderModel:
         self.mnet = mnet
         self.image_shape = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
 
+        self.transforms = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224, 224)),
+            # torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
     def to(self, gpuid):
         self.feature_extractor.to(gpuid)
         self.mnet.to(gpuid)
@@ -150,11 +156,16 @@ class EncoderModel:
     def eval(self):
         self.train(False)
 
+    def transform(self, x):
+        x = x / 255.
+        return self.transforms(x)
+
     def forward(self, x, weights):
         ts = time.time()
         if len(x.shape) == 1:
             x = x.reshape((-1, *x.shape))
         x = x.reshape(self.image_shape)
+        x = self.transform(x)
         x = self.feature_extractor(x)
         x = self.mnet.forward(x, weights)
         # print(f'Encoding Time: {ts - time.time()} s')
