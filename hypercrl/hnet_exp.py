@@ -422,6 +422,13 @@ def get_image_obs(obs: np.ndarray, hparams):
     return img
 
 
+def visualize_state(state):
+    state_representation = np.kron((torch.clone(state).detach().cpu().numpy() + 1) / 2.,
+                                   np.ones((100, 10)))
+    cv2.imshow("SR", state_representation)
+    cv2.waitKey(1)
+
+
 def run(hparams, render=False):
     print(f'Running')
 
@@ -562,6 +569,8 @@ def run(hparams, render=False):
                 if hparams.vision_params.out_var:
                     x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
                 encoder_times.append(time.time() - encode_time)
+
+                visualize_state(x_t_hat)
 
                 act_time = time.time()
                 u_t = agent.act(x_t_hat, task_id=task_id).detach().cpu().numpy()
