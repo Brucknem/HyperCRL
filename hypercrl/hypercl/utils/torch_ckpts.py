@@ -162,7 +162,7 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
             if max_ind != -1 and max_score > performance_score:
                 # Transform an existing checkpoint into a permanent one.
                 ckpt_tup = kept_ckpts[max_ind]
-                # Important, we need to remove this item from the kept_ckpts,
+                # MASTER_THESIS, we need to remove this item from the kept_ckpts,
                 # as this list is used in the next step to determine which
                 # checkpoints are removed.
                 del kept_ckpts[max_ind]

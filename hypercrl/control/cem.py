@@ -138,7 +138,7 @@ class CEM():
 
         for t in range(self.T):
             u = samples[:, self._slice_control(t)]
-            state = self.F(state, u, task_id, t == 0)
+            state = self.F(state, u, task_id)
             cost_total += self.running_cost(state, u, t, task_id)
 
         if self.terminal_state_cost:
@@ -168,7 +168,7 @@ class CEM():
 
         self.reset()
 
-        # IMPORTANT This loop is slow, but w/ and w/o vision
+        # MASTER_THESIS This loop is slow, but w/ and w/o vision
         ts = time.time()
         for m in range(self.M):
             top_samples = self._sample_top_trajectories(state, self.num_elite, task_id)

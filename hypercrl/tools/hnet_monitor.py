@@ -3,18 +3,11 @@ from .tools import MonitorRL
 
 
 class MonitorHnet(MonitorRL):
-    def __init__(self, hparams, agent, mnet, hnet, collector, encoder=None, params_split=-1):
+    def __init__(self, hparams, agent, mnet, hnet, collector, encoder_mnet=None, encoder_hnet=None):
         super(MonitorHnet, self).__init__(hparams, agent, mnet, collector, None)
         self.mnet = mnet
         self.hnet = hnet
         self.model_to_save = {'mnet': mnet, 'hnet': hnet}
-
-        self.is_vision_based = hparams.vision_params is not None
-        self.encoder = None
-        if self.is_vision_based:
-            self.model_to_save["encoder"] = encoder
-            self.encoder = encoder
-        self.params_split = params_split
 
         self.loss_task = 0
         self.loss_reg = 0
@@ -64,7 +57,6 @@ class MonitorHnet(MonitorRL):
     def validate_task(self, task_id, loader, mll, is_training=False):
         self.mnet.eval()
         self.hnet.eval()
-        self.is_vision_based and self.encoder.eval()
 
         gpuid = self.hparams.gpuid
 
@@ -74,19 +66,11 @@ class MonitorHnet(MonitorRL):
         N = len(loader)
 
         with torch.no_grad():
-            weights = self.hnet.forward(task_id)
-            mnet_weights, encoder_weights = weights[:self.params_split], weights[self.params_split:]
+            mnet_weights = self.hnet.forward(task_id)
 
             for _, data in enumerate(loader):
                 x_t, a_t, x_tt = data
                 x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
-
-                if self.is_vision_based:
-                    x_t = self.encoder.forward(x_t, encoder_weights)
-                    x_t, x_t_var = torch.split(x_t, x_t.size(-1) // 2, dim=-1)
-                    x_tt = self.encoder.forward(x_tt, encoder_weights)
-                    x_tt, x_tt_var = torch.split(x_tt, x_tt.size(-1) // 2, dim=-1)
-
                 X = torch.cat((x_t, a_t), dim=-1)
 
                 Y = self.mnet.forward(X, mnet_weights)

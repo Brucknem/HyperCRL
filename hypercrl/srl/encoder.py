@@ -1,46 +1,54 @@
+import time
+
 import numpy as np
 import torch.nn
 import torchvision
 from torch import nn
-from torchvision import transforms
+from torchvision import transforms, models
 
 
-class ResNet18Encoder(torch.nn.Module):
-    def __init__(self, out_features):
-        super().__init__()
-        self.out_features = out_features
-        self.encoder = torchvision.models.resnet18(pretrained=True)
+class ResNet18Encoder:
+    def __init__(self, mnet, hparams):
+        self.feature_extractor = models.resnet18(pretrained=True)
+        # self.feature_extractor = models.vgg16(pretrained=True)
+        self.feature_extractor.fc = torch.nn.Identity()
+        # self.feature_extractor.classifier[6] = torch.nn.Identity()
+        for params in self.feature_extractor.parameters():
+            params.requires_grad = False  #
+        self.feature_extractor.eval()
 
-        self.transform = transforms.Compose([
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.Resize((224, 224))
+        self.mnet = mnet
+        self.image_shape = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
+
+        self.transforms = transforms.Compose([
+            transforms.Resize((224, 224)),
+            # transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
+        self.param_shapes = self.mnet.param_shapes
 
-        for params in self.encoder.parameters():
-            params.requires_grad = False
+    def to(self, gpuid):
+        self.feature_extractor.to(gpuid)
+        self.mnet.to(gpuid)
 
-        self.encoder.fc = nn.Sequential(
-            nn.Linear(in_features=self.encoder.fc.in_features, out_features=out_features)
-        )
-        self.encoder.fc.requires_grad = True
+    def train(self, train=True):
+        self.feature_extractor.eval()
+        self.mnet.train(train)
 
-        self.hidden2mu = nn.Linear(out_features, out_features)
-        self.hidden2log_var = nn.Linear(out_features, out_features)
+    def eval(self):
+        self.train(False)
 
-    def reparametrize(self, mu, log_var):
-        # Reparametrization Trick to allow gradients to backpropagate from the
-        # stochastic part of the model
-        sigma = torch.exp(0.5 * log_var)
-        z = torch.randn_like(sigma)
-        return mu + sigma * z
+    def transform(self, x):
+        x = x / 255.
+        return self.transforms(x)
 
-    def forward(self, x):
+    def forward(self, x, weights):
+        ts = time.time()
+        if len(x.shape) == 1:
+            x = x.reshape((-1, *x.shape))
+        x = x.reshape(self.image_shape)
         x = self.transform(x)
-        hidden = self.encoder(x)
-        mu = self.hidden2mu(hidden)
-        log_var = self.hidden2log_var(hidden)
-        hidden = self.reparametrize(mu, log_var)
-        return {"z": hidden, "mu": mu, "log_var": log_var}
-
-    def transform(self, x: torch.Tensor):
-        return self.transform(x)
+        x = self.feature_extractor(x)
+        x = self.mnet.forward(x, weights)
+        # print(f'Encoding Time: {ts - time.time()} s')
+        return x

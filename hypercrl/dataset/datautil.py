@@ -33,6 +33,15 @@ def train_val_split(dataset, val_size=0.25):
 
 class DataCollector():
     def __init__(self, hparams):
+        self.clear()
+        self.next_mode = hparams.dnn_out
+        self.normalize_xu = hparams.normalize_xu
+        self.env_name = hparams.env
+
+        self.is_vision_based = hparams.vision_params is not None
+        self.max_capacity = hparams.collector_max_capacity
+
+    def clear(self):
         self.states = {}
         self.actions = {}
         self.nexts = {}
@@ -44,12 +53,6 @@ class DataCollector():
         self.dx_aggregate = {}
         self.norms = {}
         self.fig = None
-        self.next_mode = hparams.dnn_out
-        self.normalize_xu = hparams.normalize_xu
-        self.env_name = hparams.env
-
-        self.is_vision_based = hparams.vision_params is not None
-        self.max_capacity = hparams.collector_max_capacity
 
     def num_tasks(self):
         return len(self.states)

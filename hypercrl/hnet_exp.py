@@ -4,6 +4,8 @@ import random
 import matplotlib
 import torchvision.models
 
+from hypercrl.srl import ResNet18Encoder
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time
@@ -18,9 +20,13 @@ from hypercrl.tools import MonitorHnet, HP, Hparams
 from hypercrl.control import RandomAgent, MPC
 from hypercrl.envs.cl_env import CLEnvHandler
 from hypercrl.dataset.datautil import DataCollector
+from hypercrl.srl.datautil import DataCollector as SRLDataCollector
 
 from hypercrl.model import build_model_hnet as build_model
-from hypercrl.model import build_vision_model_hnet as build_vision_model
+from hypercrl.srl.tools import build_vision_model_hnet as build_vision_model
+from hypercrl.srl.tools import reload_vision_model_hnet as reload_vision_model
+from hypercrl.srl.tools import augment_model as augment_vision_model
+
 from hypercrl.model import reload_model_hnet as reload_model
 from hypercrl.hypercl.utils import hnet_regularizer as hreg
 from hypercrl.hypercl.utils import ewc_regularizer as ewc
@@ -152,33 +158,7 @@ class TaskLossReplay(TaskLossMT):
         self.old_data_iter = old_data_iter
 
 
-def augment_vision_model(task_id, mnet, hnet, collector, hparams):
-    if not mnet or not hnet:
-        return None
-
-    # Regularizer targets.
-    targets = hreg.get_current_targets(task_id, hnet)
-
-    # Add new hypernet embeddings and Loss Function
-    hnet.add_task(task_id, hparams.std_normal_temb)
-
-    # (Re)Put model to GPU
-    gpuid = hparams.gpuid
-    mnet.to(gpuid)
-    hnet.to(gpuid)
-
-    regularized_params = list(hnet.theta)
-    theta_optimizer = torch.optim.Adam(regularized_params, lr=hparams.lr_hyper)
-    # We only optimize the task embedding corresponding to the current task,
-    # the remaining ones stay constant.
-    emb_optimizer = torch.optim.Adam([hnet.get_task_emb(task_id)], lr=hparams.lr_hyper)
-
-    trainer_misc = (targets, theta_optimizer, emb_optimizer, regularized_params)
-
-    return trainer_misc
-
-
-def augment_model(task_id, mnet, hnet, collector, hparams, encoder_mnet=None):
+def augment_model(task_id, mnet, hnet, collector, hparams):
     # Regularizer targets.
     targets = hreg.get_current_targets(task_id, hnet)
 
@@ -197,15 +177,11 @@ def augment_model(task_id, mnet, hnet, collector, hparams, encoder_mnet=None):
     gpuid = hparams.gpuid
     mnet.to(gpuid)
     hnet.to(gpuid)
-    if encoder_mnet:
-        encoder_mnet.to(gpuid)
 
     # Optimize over the GP model params and likelihood param
 
     mnet.train()
     hnet.train()
-    if encoder_mnet:
-        encoder_mnet.train()
 
     # Collect Fisher estimates for the reg computation.
     fisher_ests = None
@@ -260,10 +236,11 @@ def augment_model_after(task_id, mnet, hnet, hparams, collector):
                            regression=True, allowed_outputs=None, out_var=hparams.out_var)
 
 
-def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder_mnet=None, params_split=-1):
-    # IMPORTANT Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
+def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
+    # MASTER_THESIS Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
 
     print("Training")
+    ts = time.time()
 
     # Data Loader
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=hparams.bs, shuffle=True,
@@ -276,53 +253,30 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder
 
     targets, mll, theta_optimizer, emb_optimizer, regularized_params, fisher_ests, si_omega = trainer_misc
 
-    is_vision_based = hparams.vision_params is not None
-
     # Whether the regularizer will be computed during training?
     calc_reg = task_id > 0 and hparams.beta > 0
 
-    # IMPORTANT Add either SRL pretraining or Encoding
+    # MASTER_THESIS Add either SRL pretraining or Encoding
 
     it = 0
     while it < hparams.train_dynamic_iters:
         mnet.train()
         hnet.train()
-        is_vision_based and encoder_mnet.train()
-
-        previous_encoder_weights = None
 
         for i, data in enumerate(train_loader):
             # Train theta and task embedding.
             theta_optimizer.zero_grad()
             emb_optimizer.zero_grad()
 
-            weights = hnet.forward(task_id)
-            mnet_weights, encoder_weights = weights[:params_split], weights[params_split:]
-
-            # Check that encoder weights really update
-            # if previous_encoder_weights:
-            #     distances = sum(
-            #         [torch.sum(torch.abs(encoder_weights[i] - previous_encoder_weights[i])) for i in
-            #          range(len(encoder_weights))])
-            # previous_encoder_weights = encoder_weights
+            mnet_weights = hnet.forward(task_id)
 
             if len(data) == 3:
                 x_t, a_t, x_tt = data
                 x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
-                if is_vision_based:
-                    x_t = encoder_mnet.forward(x_t, encoder_weights)
-                    x_t, x_t_var = torch.split(x_t, hparams.out_dim, dim=-1)
                 X = torch.cat((x_t, a_t), dim=-1)
             else:
                 X, x_tt = data
                 X, x_tt = X.to(gpuid), x_tt.to(gpuid)
-                if is_vision_based:
-                    X = encoder_mnet.forward(X, encoder_weights)
-                    X, X_var = torch.split(X, hparams.out_dim, dim=-1)
-
-            if is_vision_based:
-                x_tt = encoder_mnet.forward(x_tt, encoder_weights)
-                x_tt, x_tt_var = torch.split(x_tt, hparams.out_dim, dim=-1)
 
             if hparams.model == "hnet_si":
                 si.si_update_optim_step(mnet, mnet_weights, task_id)
@@ -343,8 +297,8 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder
 
             # SI
             if hparams.model == "hnet_si":
-                torch.nn.utils.clip_grad_norm_(weights, hparams.grad_max_norm)
-                si.si_update_grad(mnet, weights, task_id)
+                torch.nn.utils.clip_grad_norm_(mnet_weights, hparams.grad_max_norm)
+                si.si_update_grad(mnet, mnet_weights, task_id)
 
             # Update Regularization
             loss_reg = torch.tensor(0., requires_grad=False)
@@ -398,7 +352,7 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder
             torch.nn.utils.clip_grad_norm_(regularized_params, hparams.grad_max_norm)
             theta_optimizer.step()
 
-            logger.train_step(loss_task, loss_reg, dTheta, grad_tloss, weights)
+            logger.train_step(loss_task, loss_reg, dTheta, grad_tloss, mnet_weights)
             # Validate
             logger.validate(mll)
 
@@ -459,7 +413,7 @@ def get_image_obs(obs: np.ndarray, hparams):
     w, h = hparams.vision_params.camera_widths, hparams.vision_params.camera_heights
     flattened_image_dims = w * h * 3
     img = obs[-flattened_image_dims:]
-    # IMPORTANT don't normalize here, convert to uint8 as much smaller memory
+    # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
     # img = img / 255.
     img = img.astype(np.uint8)
     cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
@@ -474,6 +428,11 @@ def run(hparams, render=False):
     # Reset seed
     reset_seed(hparams.seed)
 
+    # Vision-Based
+    is_vision_based = hparams.vision_params is not None
+    image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3) \
+        if is_vision_based else None
+
     # Fix data/env seed for lqr10
     if hparams.env == "lqr10" and hparams.rand_aggregate_seed is not None:
         np.random.seed(hparams.rand_aggregate_seed)
@@ -481,7 +440,9 @@ def run(hparams, render=False):
 
     if hparams.resume:
         # Restore model and agent
-        mnet, hnet, agent, checkpoint, collector, encoder_mnet, params_split = reload_model(hparams)
+        mnet, hnet, agent, checkpoint, collector = reload_model(hparams)
+        encoder_mnet, encoder_hnet, srl_checkpoint, srl_collector = reload_vision_model(
+            hparams) if is_vision_based else (None, None, None, None)
 
         # Restore Logger
         logger = MonitorHnet(hparams, agent, mnet, hnet, collector)
@@ -495,13 +456,17 @@ def run(hparams, render=False):
         collector = DataCollector(hparams)
 
         # Build model
-        mnet, hnet, encoder_mnet, params_split = build_model(hparams)
+        mnet, hnet = build_model(hparams)
+
+        # Vision-Based
+        encoder_mnet, encoder_hnet = build_vision_model(hparams) if is_vision_based else (None, None)
+        srl_collector = SRLDataCollector(hparams) if is_vision_based else None
 
         # RL Agent
-        agent = MPC(hparams, mnet, collector=collector, hnet=hnet, params_split=params_split)
+        agent = MPC(hparams, mnet, collector=collector, hnet=hnet)
 
         # Monitor
-        logger = MonitorHnet(hparams, agent, mnet, hnet, collector, encoder_mnet, params_split)
+        logger = MonitorHnet(hparams, agent, mnet, hnet, collector, encoder_mnet, encoder_hnet)
 
         # Start from scratch
         num_tasks_seen = 0
@@ -509,16 +474,11 @@ def run(hparams, render=False):
     # Convert to cuda
     mnet.to(hparams.gpuid)
     hnet.to(hparams.gpuid)
-    if encoder_mnet:
-        encoder_mnet.to(hparams.gpuid)
+    is_vision_based and encoder_mnet.to(hparams.gpuid)
+    is_vision_based and encoder_hnet.to(hparams.gpuid)
 
     # Random Policy
     rand_pi = RandomAgent(hparams)
-
-    # Vision-Based
-    is_vision_based = hparams.vision_params is not None
-    image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3) \
-        if is_vision_based else None
 
     # Start learning in environment
     envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed, image_dims=image_dims)
@@ -539,9 +499,13 @@ def run(hparams, render=False):
                 print(f"Step: {it} / {hparams.init_rand_steps}")
             u = rand_pi.act(x_t)
             x_tt, _, done, _ = env.step(u.reshape(env.action_space.shape))
-            x_tt = get_image_obs(x_tt, hparams) if is_vision_based else x_tt
 
-            collector.add(x_t, u, x_tt, task_id)
+            if is_vision_based:
+                x_tt = get_image_obs(x_tt, hparams)
+                srl_collector.add(x_t, u, x_tt, task_id)
+            else:
+                collector.add(x_t, u, x_tt, task_id)
+
             x_t = x_tt
             logger.data_aggregate_step(x_tt, task_id, it)
             if done:
@@ -549,34 +513,37 @@ def run(hparams, render=False):
                 x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
 
         # Augment Model, instantiate optimizers/regularizer targets
-        trainer_misc = augment_model(task_id, mnet, hnet, collector, hparams, encoder_mnet)
+        trainer_misc = augment_model(task_id, mnet, hnet, collector, hparams)
+        encoder_trainer_misc = augment_vision_model(task_id, encoder_mnet, encoder_hnet, srl_collector, hparams)
 
         # Interact with the environment
         x_t = env.reset()
         x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
 
-        weights = hnet.forward(task_id)
-        mnet_weights, encoder_weights = weights[:params_split], weights[params_split:]
-        encoder_times, act_times = [0], [0]
+        # MASTER_THESIS See why task embs is empty
+        encoder_weights = encoder_hnet.forward(task_id) if is_vision_based else None
+        encoder_times, act_times = [], []
 
         agent.reset()
         for it in range(hparams.max_iteration):
             if it % hparams.dynamics_update_every == 0:
                 cv2.destroyAllWindows()
-                # IMPORTANT Maybe split training in SRL and RL
-                weights = hnet.forward(task_id)
-                mnet_weights, encoder_weights = weights[:params_split], weights[params_split:]
+
+                if is_vision_based:
+                    encoder_weights = encoder_hnet.forward(task_id)
+                    srl_collector.convert(task_id, encoder_mnet, encoder_hnet, collector, hparams.gpuid)
 
                 # Train Dynamics Model
                 ts = time.time()
                 train_set, _ = collector.get_dataset(task_id)
-                train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams, encoder_mnet, params_split)
+                # MASTER_THESIS Maybe split training in SRL and RL
+                train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams)
                 train_time = time.time() - ts
                 print(f"Training time", train_time)
 
-                logger.writer.add_scalar('train/time', train_time, it)
-                logger.writer.add_scalar('misc/encode_time', np.mean(encoder_times), it)
-                logger.writer.add_scalar('misc/act_time', np.mean(act_times), it)
+                logger.writer.add_scalar('rl/time', train_time, it)
+                len(act_times) > 0 and logger.writer.add_scalar('rl/act_time', np.mean(act_times), it)
+                len(encoder_times) > 0 and logger.writer.add_scalar('srl/encode_time', np.mean(encoder_times), it)
                 encoder_times, act_times = [], []
 
             if it % 20 == 0:
@@ -592,7 +559,8 @@ def run(hparams, render=False):
             if is_vision_based:
                 encode_time = time.time()
                 x_t_hat = encoder_mnet.forward(torch.from_numpy(x_t).float().to(hparams.gpuid), encoder_weights)
-                x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
+                if hparams.vision_params.out_var:
+                    x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
                 encoder_times.append(time.time() - encode_time)
 
                 act_time = time.time()
@@ -605,7 +573,7 @@ def run(hparams, render=False):
             x_tt = get_image_obs(x_tt, hparams) if is_vision_based else x_tt
 
             # Update the dataset of the env in which we're training
-            collector.add(x_t, u_t, x_tt, task_id)
+            srl_collector.add(x_t, u_t, x_tt, task_id) if is_vision_based else collector.add(x_t, u_t, x_tt, task_id)
             x_t = x_tt
 
             if done:

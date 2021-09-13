@@ -60,7 +60,7 @@ class RandomAgent(Agent):
 
 
 class MPC(Agent):
-    def __init__(self, hparams, model, envs=None, collector=None, likelihood=None, hnet=None, params_split=-1):
+    def __init__(self, hparams, model, envs=None, collector=None, likelihood=None, hnet=None):
         super(MPC, self).__init__(hparams)
         self.model = model
         self.hnet = hnet
@@ -72,8 +72,6 @@ class MPC(Agent):
         self.gt_dynamic = hparams.gt_dynamic
         self.control_type = hparams.control
         self.is_vision_based = hparams.vision_params is not None
-        self.vision_out_var = hparams.vision_params.out_var if self.is_vision_based else False
-        self.params_split = params_split
         self.input_view_dim = (-1, self.state_dim)
 
         if self.model_name.startswith("hnet") or self.model_name == "chunked_hnet":
@@ -129,14 +127,16 @@ class MPC(Agent):
             self.x_mu, self.x_std = x_mu.to(self.gpuid), x_std.to(self.gpuid)
             self.a_mu, self.a_std = a_mu.to(self.gpuid), a_std.to(self.gpuid)
 
-    def _dynamics(self, x, u, task_id, encode=False):
+    def _dynamics(self, x, u, task_id):
         # Delay reshaping to after normalization in vision based envs
         x = x.view(-1, self.state_dim)
         u = u.view(-1, self.control_dim)
         xcopy = x.clone()
 
         # State preprocessing
-        if self.env_name.startswith("inverted_pendulum") or self.env_name.startswith('cartpole'):
+        if self.is_vision_based:
+            pass
+        elif self.env_name.startswith("inverted_pendulum") or self.env_name.startswith('cartpole'):
             x = torch.cat((x[:, 0:1], torch.cos(x[:, 1:2]), torch.sin(x[:, 1:2]), x[:, 2:]), dim=-1)
         elif self.env_name in ["half_cheetah_body", "hopper"]:
             x = torch.cat((x[:, 1:2], torch.cos(x[:, 2:3]), torch.sin(x[:, 2:3]), x[:, 3:]), dim=-1)
@@ -175,7 +175,6 @@ class MPC(Agent):
 
         elif self.model_name.startswith("hnet") or self.model_name == "chunked_hnet":
             weights = self.hnet(task_id) if self._cached_weights is None else self._cached_weights
-            weights = weights[:self.params_split]
             xu = torch.cat((x, u), dim=-1)
             xx = self.model.forward(xu, weights)
 

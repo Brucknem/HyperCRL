@@ -901,7 +901,7 @@ def default_arg_door_pose(hparams):
 
     # Tasks
     hparams.num_tasks = 5
-    hparams.init_rand_steps = 2000  # IMPORTANT Original: 2000
+    hparams.init_rand_steps = 200  # MASTER_THESIS Original: 2000
     hparams.max_iteration = 60000
     hparams.dynamics_update_every = 200
     hparams.out_var = True
@@ -924,8 +924,8 @@ def default_arg_door_pose(hparams):
     hparams.M = 600
 
     # RL Eval setting
-    hparams.eval_env_run_every = 1000  # IMPORTANT 1000
-    hparams.run_eval_env_eps = 1  # IMPORTANT 1
+    hparams.eval_env_run_every = 1000  # MASTER_THESIS 1000
+    hparams.run_eval_env_eps = 1  # MASTER_THESIS 1
 
     # RL Planning
     hparams.control = "mpc-cem"
@@ -935,7 +935,7 @@ def default_arg_door_pose(hparams):
 
     # CEM
     hparams.n_sim_steps = 5  # Number of search steps
-    hparams.n_sim_particles = 2000  # IMPORTANT 2000 # Number of traj to sample(in cem and mppi)
+    hparams.n_sim_particles = 2000  # MASTER_THESIS 2000 # Number of traj to sample(in cem and mppi)
     hparams.num_cem_elites = 40
 
     # PDDM
@@ -951,14 +951,14 @@ def default_arg_door_pose(hparams):
         hparams.state_dim = 128
         hparams.out_dim = hparams.state_dim
         hparams.dnn_out = "state"
-        hparams.normalize_xu = False
+        # hparams.normalize_xu = False
 
         hparams.vision_params.camera_widths = 224
         hparams.vision_params.camera_heights = 224
-        hparams.collector_max_capacity = 5000
+        hparams.vision_params.collector_max_capacity = 5000
 
         hparams.vision_params.in_dim = 512
         hparams.vision_params.hdims = [200, 200, 200, 200]
-        hparams.vision_params.out_var = True
+        hparams.vision_params.out_var = False
 
     return hparams
