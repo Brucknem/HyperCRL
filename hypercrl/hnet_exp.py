@@ -20,18 +20,19 @@ from hypercrl.tools import MonitorHnet, HP, Hparams
 from hypercrl.control import RandomAgent, MPC
 from hypercrl.envs.cl_env import CLEnvHandler
 from hypercrl.dataset.datautil import DataCollector
-from hypercrl.srl.datautil import DataCollector as SRLDataCollector
-
 from hypercrl.model import build_model_hnet as build_model
-from hypercrl.srl.tools import build_vision_model_hnet as build_vision_model
-from hypercrl.srl.tools import reload_vision_model_hnet as reload_vision_model
-from hypercrl.srl.tools import augment_model as augment_vision_model
 
 from hypercrl.model import reload_model_hnet as reload_model
 from hypercrl.hypercl.utils import hnet_regularizer as hreg
 from hypercrl.hypercl.utils import ewc_regularizer as ewc
 from hypercrl.hypercl.utils import si_regularizer as si
 from hypercrl.hypercl.utils import optim_step as opstep
+
+from hypercrl.srl.datautil import DataCollector as SRLDataCollector
+from hypercrl.srl.tools import build_vision_model_hnet as build_vision_model
+from hypercrl.srl.tools import reload_vision_model_hnet as reload_vision_model
+from hypercrl.srl.tools import augment_model as augment_vision_model
+from hypercrl.srl.tools import train as train_vision
 
 
 class TaskLoss(torch.nn.Module):
@@ -237,9 +238,7 @@ def augment_model_after(task_id, mnet, hnet, hparams, collector):
 
 
 def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
-    # MASTER_THESIS Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
-
-    print("Training")
+    print("Training dynamics model")
     ts = time.time()
 
     # Data Loader
@@ -255,8 +254,6 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
 
     # Whether the regularizer will be computed during training?
     calc_reg = task_id > 0 and hparams.beta > 0
-
-    # MASTER_THESIS Add either SRL pretraining or Encoding
 
     it = 0
     while it < hparams.train_dynamic_iters:
@@ -416,15 +413,18 @@ def get_image_obs(obs: np.ndarray, hparams):
     # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
     # img = img / 255.
     img = img.astype(np.uint8)
-    cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
-    cv2.waitKey(1)
+    # cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
+    # cv2.waitKey(1)
     # print(f'Get image obs time: {ts - time.time()} s')
     return img
 
 
 def visualize_state(state):
-    state_representation = np.kron((torch.clone(state).detach().cpu().numpy() + 1) / 2.,
-                                   np.ones((100, 10)))
+    return
+    s = (torch.clone(state).detach().cpu().numpy())
+    s = (s - min(s[0])) / (max(s[0]) - min(s[0]))
+    w = 1600 // s.shape[1]
+    state_representation = np.kron(s, np.ones((100, w)))
     cv2.imshow("SR", state_representation)
     cv2.waitKey(1)
 
@@ -497,27 +497,7 @@ def run(hparams, render=False):
         # New Task with different friction
         env = envs.add_task(task_id, render=render)
 
-        print(f"Collecting some random data first for task {task_id}")
-        x_t = env.reset()
-        x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
-
-        for it in range(hparams.init_rand_steps):
-            if it % 100 == 0:
-                print(f"Step: {it} / {hparams.init_rand_steps}")
-            u = rand_pi.act(x_t)
-            x_tt, _, done, _ = env.step(u.reshape(env.action_space.shape))
-
-            if is_vision_based:
-                x_tt = get_image_obs(x_tt, hparams)
-                srl_collector.add(x_t, u, x_tt, task_id)
-            else:
-                collector.add(x_t, u, x_tt, task_id)
-
-            x_t = x_tt
-            logger.data_aggregate_step(x_tt, task_id, it)
-            if done:
-                x_t = env.reset()
-                x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
+        collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vision_based, srl_collector)
 
         # Augment Model, instantiate optimizers/regularizer targets
         trainer_misc = augment_model(task_id, mnet, hnet, collector, hparams)
@@ -527,30 +507,43 @@ def run(hparams, render=False):
         x_t = env.reset()
         x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
 
-        # MASTER_THESIS See why task embs is empty
         encoder_weights = encoder_hnet.forward(task_id) if is_vision_based else None
         encoder_times, act_times = [], []
 
         agent.reset()
+        train_it = 0
         for it in range(hparams.max_iteration):
+            if is_vision_based and it % hparams.vision_params.srl_update_every == 0:
+                cv2.destroyAllWindows()
+
+                # collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vision_based, srl_collector)
+
+                if not hparams.vision_params.dont_train_srl:
+                    train_vision(task_id, encoder_mnet, encoder_hnet, encoder_trainer_misc, logger, srl_collector,
+                                 hparams, train_it)
+                train_it += 1
+                encoder_mnet.eval()
+                encoder_hnet.eval()
+
             if it % hparams.dynamics_update_every == 0:
                 cv2.destroyAllWindows()
 
                 if is_vision_based:
+                    encoder_mnet.eval()
+                    encoder_hnet.eval()
                     encoder_weights = encoder_hnet.forward(task_id)
                     srl_collector.convert(task_id, encoder_mnet, encoder_hnet, collector, hparams.gpuid)
 
                 # Train Dynamics Model
                 ts = time.time()
                 train_set, _ = collector.get_dataset(task_id)
-                # MASTER_THESIS Maybe split training in SRL and RL
                 train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams)
                 train_time = time.time() - ts
-                print(f"Training time", train_time)
+                print(f"Dynamics training time", train_time)
 
-                logger.writer.add_scalar('rl/time', train_time, it)
-                len(act_times) > 0 and logger.writer.add_scalar('rl/act_time', np.mean(act_times), it)
-                len(encoder_times) > 0 and logger.writer.add_scalar('srl/encode_time', np.mean(encoder_times), it)
+                logger.writer.add_scalar('time/train_rl', train_time, it)
+                len(act_times) > 0 and logger.writer.add_scalar('time/act', np.mean(act_times), it)
+                len(encoder_times) > 0 and logger.writer.add_scalar('time/encode', np.mean(encoder_times), it)
                 encoder_times, act_times = [], []
 
             if it % 20 == 0:
@@ -564,6 +557,10 @@ def run(hparams, render=False):
 
             # Run MPC
             if is_vision_based:
+                # if not srl_collector.empty(
+                #         task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
+                #     u_t = srl_collector.sample_action(task_id)
+                # else:
                 encode_time = time.time()
                 x_t_hat = encoder_mnet.forward(torch.from_numpy(x_t).float().to(hparams.gpuid), encoder_weights)
                 if hparams.vision_params.out_var:
@@ -582,7 +579,8 @@ def run(hparams, render=False):
             x_tt = get_image_obs(x_tt, hparams) if is_vision_based else x_tt
 
             # Update the dataset of the env in which we're training
-            srl_collector.add(x_t, u_t, x_tt, task_id) if is_vision_based else collector.add(x_t, u_t, x_tt, task_id)
+            srl_collector.add(x_t, u_t, x_tt, reward, task_id) if is_vision_based else collector.add(x_t, u_t, x_tt,
+                                                                                                     task_id)
             x_t = x_tt
 
             if done:
@@ -599,6 +597,33 @@ def run(hparams, render=False):
 
     envs.close()
     logger.writer.close()
+
+
+def collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vision_based=False, srl_collector=None):
+    print(f"Collecting some random data for task {task_id}")
+    x_t = env.reset()
+    x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
+    for it in range(hparams.init_rand_steps):
+        if it % 100 == 0:
+            print(f"Random Step: {it} / {hparams.init_rand_steps}")
+
+        if not srl_collector.empty(task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
+            u = srl_collector.sample_action(task_id)
+        else:
+            u = rand_pi.act(x_t)
+        x_tt, reward, done, _ = env.step(u.reshape(env.action_space.shape))
+
+        if is_vision_based:
+            x_tt = get_image_obs(x_tt, hparams)
+            srl_collector.add(x_t, u, x_tt, reward, task_id)
+        else:
+            collector.add(x_t, u, x_tt, task_id)
+
+        x_t = x_tt
+        logger.data_aggregate_step(x_tt, task_id, it)
+        if done:
+            x_t = env.reset()
+            x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
 
 
 def chunked_hnet(env, seed=None, savepath=None, play=False):

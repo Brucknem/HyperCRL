@@ -1,5 +1,4 @@
-from .encoder import ResNet18Encoder
-from .decoder import SpatialBroadcastDecoder
+from .models import ResNet18Encoder, MLP
 from .srl import SRL
 from .srl_dataset import SRLDataSet
 from .srl_trainer import SRLTrainer

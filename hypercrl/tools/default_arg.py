@@ -15,6 +15,8 @@ class Hparams():
             hparams.hnet_arch = [128, 128]
         elif hparams.h_dims == [200, 200, 200, 200]:
             hparams.hnet_arch = [256, 256]
+        elif hparams.h_dims == [200, 200, 200, 200, 200, 200, 200, 200]:
+            hparams.hnet_arch = [256, 256, 256, 256]
         elif hparams.h_dims == [200, 200, 200]:
             hparams.hnet_arch = [100, 100]
         elif hparams.h_dims == [400, 400, 400]:
@@ -901,7 +903,7 @@ def default_arg_door_pose(hparams):
 
     # Tasks
     hparams.num_tasks = 5
-    hparams.init_rand_steps = 200  # MASTER_THESIS Original: 2000
+    hparams.init_rand_steps = 5000  # MASTER_THESIS Original: 2000
     hparams.max_iteration = 60000
     hparams.dynamics_update_every = 200
     hparams.out_var = True
@@ -910,6 +912,8 @@ def default_arg_door_pose(hparams):
     # hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
     hparams.h_dims = [200, 200, 200, 200]
+    hparams.use_batch_norm = False
+    hparams.dropout_rate = -1
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
@@ -948,17 +952,36 @@ def default_arg_door_pose(hparams):
     # Vision-Based
     is_vision_based = hparams.vision_params is not None
     if is_vision_based:
-        hparams.state_dim = 128
+        hparams.state_dim = 512
         hparams.out_dim = hparams.state_dim
         hparams.dnn_out = "state"
         # hparams.normalize_xu = False
 
         hparams.vision_params.camera_widths = 224
         hparams.vision_params.camera_heights = 224
-        hparams.vision_params.collector_max_capacity = 5000
+        hparams.vision_params.collector_max_capacity = 10000
+
+        hparams.vision_params.dont_train_srl = False
+        hparams.vision_params.bs = 100
+        hparams.vision_params.lr_hyper = 0.001
 
         hparams.vision_params.in_dim = 512
-        hparams.vision_params.hdims = [200, 200, 200, 200]
+        hparams.vision_params.hdims = [200] * 4
         hparams.vision_params.out_var = False
+        hparams.vision_params.use_batch_norm = False
+        hparams.vision_params.dropout_rate = -1
+
+        hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
+        hparams.vision_params.forward_model_lr = 0.001
+        hparams.vision_params.inverse_model_dims = [200, 200, 200, 200]
+        hparams.vision_params.inverse_model_lr = 0.001
+
+        hparams.vision_params.srl_update_every = 1000
+        hparams.vision_params.train_vision_iters = 500
+        hparams.vision_params.print_train_every = 50
+        hparams.vision_params.sample_known_action_prob = 0.1
+
+        hparams.vision_params.use_priors = True
+        hparams.vision_params.use_fast_priors = False
 
     return hparams

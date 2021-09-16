@@ -146,7 +146,9 @@ def build_model_hnet(hparams, num_input=2):
     mnet = MLP(n_in=input_dim,
                n_out=out_dim, hidden_layers=hparams.h_dims,
                no_weights=True, out_var=hparams.out_var,
-               mlp_var_minmax=hparams.mlp_var_minmax)
+               mlp_var_minmax=hparams.mlp_var_minmax,
+               use_batch_norm=hparams.use_batch_norm,
+               dropout_rate=hparams.dropout_rate)
 
     print('Constructed MLP with shapes: ', mnet.param_shapes)
     param_shapes = mnet.param_shapes

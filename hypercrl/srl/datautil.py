@@ -1,5 +1,8 @@
+from collections import defaultdict
+
 import cv2
 import numpy as np
+import time
 import torch
 from torch.utils.data import TensorDataset
 
@@ -19,8 +22,12 @@ class DataCollector:
 
         # MASTER_THESIS Remove nexts for better RAM usage
         self.nexts = {}
+        self.rewards = {}
+
         self.train_inds = {}
         self.val_inds = {}
+
+        self.same_actions = {}
 
         self.next_mode = hparams.dnn_out
         self.normalize_xu = hparams.normalize_xu
@@ -33,21 +40,23 @@ class DataCollector:
     def num_tasks(self):
         return len(self.images)
 
-    def add(self, x_t, u, x_tt, task_id):
+    def add(self, x_t, u, x_tt, r, task_id):
         # Convert Format
         if isinstance(u, torch.Tensor):
             u = u.detach().cpu().numpy()
         if u.ndim == 1:
             u = u[:, None]
-            
+
         if task_id in self.images:
             self.images[task_id].append(x_t)
             self.actions[task_id].append(u)
             self.nexts[task_id].append(x_tt)
+            self.rewards[task_id].append(r)
         else:
             self.images[task_id] = [x_t]
             self.actions[task_id] = [u]
             self.nexts[task_id] = [x_tt]
+            self.rewards[task_id] = [r]
         # Train or val
         is_train = (np.random.random() <= 0.75)
 
@@ -63,6 +72,13 @@ class DataCollector:
             else:
                 self.val_inds[task_id] = [ind]
 
+        if task_id not in self.same_actions:
+            self.same_actions[task_id] = {}
+        action = tuple(np.squeeze(u))
+        if action not in self.same_actions[task_id]:
+            self.same_actions[task_id][action] = []
+        self.same_actions[task_id][action].append(ind)
+
         self.delete_on_max_capacity(task_id)
 
     def delete_on_max_capacity(self, task_id):
@@ -70,22 +86,36 @@ class DataCollector:
             return
 
         while len(self.images[task_id]) > self.max_capacity:
-            is_train = True if len(self.val_inds[task_id]) <= 0 else (
-                False if len(self.train_inds[task_id]) <= 0 else np.random.random() <= 0.75)
-            if is_train:
-                idx = np.random.randint(0, max(1, len(self.train_inds[task_id]) // 2))
-                elem = self.train_inds[task_id][idx]
-                del self.train_inds[task_id][idx]
+            probs = np.array(self.rewards[task_id])
+            inds = np.where(probs < np.median(probs))[0]
+            probs = probs[inds]
+            probs = -probs
+            probs = probs - min(probs)
+            probs = probs / sum(probs)
+            idx = np.random.choice(inds, p=probs)
+
+            if idx in self.train_inds[task_id]:
+                self.train_inds[task_id].remove(idx)
             else:
-                idx = np.random.randint(0, max(1, len(self.val_inds[task_id]) // 2))
-                elem = self.val_inds[task_id][idx]
-                del self.val_inds[task_id][idx]
+                self.val_inds[task_id].remove(idx)
 
-            self.train_inds[task_id] = list(map(lambda x: x if x < elem else x - 1, self.train_inds[task_id]))
-            self.val_inds[task_id] = list(map(lambda x: x if x < elem else x - 1, self.val_inds[task_id]))
+            self.train_inds[task_id] = list(map(lambda x: x if x < idx else x - 1, self.train_inds[task_id]))
+            self.val_inds[task_id] = list(map(lambda x: x if x < idx else x - 1, self.val_inds[task_id]))
 
-            del self.images[task_id][elem]
-            del self.actions[task_id][elem]
+            to_del = []
+            for key, value in self.same_actions[task_id].items():
+                idx in value and value.remove(idx)
+                if len(value) == 0:
+                    to_del.append(key)
+                self.same_actions[task_id][key] = list(map(lambda x: x if x < idx else x - 1, value))
+
+            for key in to_del:
+                del self.same_actions[task_id][key]
+
+            del self.images[task_id][idx]
+            del self.actions[task_id][idx]
+            del self.nexts[task_id][idx]
+            del self.rewards[task_id][idx]
 
         # print(len(self.states[task_id]))
 
@@ -95,6 +125,7 @@ class DataCollector:
         states, actions are normalized to N(0, 1)
         """
 
+        indices = torch.IntTensor(list(range(len(self.images[task_id]))))
         images = torch.FloatTensor(np.hstack(self.images[task_id])).reshape(self.image_dims)
         actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
         nexts = torch.FloatTensor(np.hstack(self.nexts[task_id])).reshape(self.image_dims)
@@ -104,19 +135,63 @@ class DataCollector:
 
         if ds_range == "second_half":
             train_inds = train_inds[len(train_inds) // 2:]
-        train_set = TensorDataset(images[train_inds], actions[train_inds], nexts[train_inds])
-        val_set = TensorDataset(images[val_inds], actions[val_inds], nexts[val_inds])
+        train_set = TensorDataset(indices[train_inds], images[train_inds], actions[train_inds], nexts[train_inds])
+        val_set = TensorDataset(indices[val_inds], images[val_inds], actions[val_inds], nexts[val_inds])
 
         return train_set, val_set
 
     def get_whole_dataset(self, task_id):
+        indices = torch.IntTensor(list(range(len(self.images[task_id]))))
         images = torch.FloatTensor(np.hstack(self.images[task_id])).reshape(self.image_dims)
         actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
         nexts = torch.FloatTensor(np.hstack(self.nexts[task_id])).reshape(self.image_dims)
 
-        train_set = TensorDataset(images, actions, nexts)
+        train_set = TensorDataset(indices, images, actions, nexts)
 
         return train_set
+
+    def get_same_actions(self, task_id, idx, train=True):
+        indices = self.same_actions[task_id][tuple(self.actions[task_id][idx].squeeze())]
+        if train:
+            indices = [i for i in indices if i in self.train_inds[task_id]]
+        else:
+            indices = [i for i in indices if i in self.val_inds[task_id]]
+
+        images = np.array([])
+        nexts = np.array([])
+        if indices:
+            indices.remove(int(idx))
+            if indices:
+                indices = np.array(indices)
+                images = np.array([self.images[task_id][i] for i in indices]).reshape(self.image_dims)
+                nexts = np.array([self.nexts[task_id][i] for i in indices]).reshape(self.image_dims)
+
+        return images, nexts
+
+    def get_by_action(self, task_id, u):
+        if isinstance(u, torch.Tensor):
+            u = u.detach().cpu().numpy()
+        if u.ndim == 1:
+            u = u[:, None]
+        u = np.squeeze(u)
+
+        ts = time.time()
+        keys = list(self.same_actions[task_id].keys())
+        indices = np.where(np.linalg.norm(np.array(keys) - u, axis=-1) < 1e-5)
+        indices = [self.same_actions[task_id][keys[i[0]]] for i in indices]
+        # print(f'Search same actions time: {time.time() - ts}')
+        if not indices:
+            return torch.Tensor([]), torch.Tensor([]), torch.Tensor([])
+
+        ts = time.time()
+        indices = np.squeeze(indices)
+
+        images = torch.from_numpy(np.array(self.images[task_id]))[indices].reshape(self.image_dims)
+        actions = torch.from_numpy(np.array(self.actions[task_id]))[indices]
+        nexts = torch.from_numpy(np.array(self.nexts[task_id]))[indices].reshape(self.image_dims)
+        # print(f'Create Tensors time: {time.time() - ts}')
+
+        return images, actions, nexts
 
     def convert(self, task_id: int, encoder: ResNet18Encoder, hnet: HyperNetwork,
                 collector: hypercrl.dataset.datautil.DataCollector, gpuid: str):
@@ -133,8 +208,17 @@ class DataCollector:
         encoder_weights = hnet.forward(task_id)
 
         for i, data in enumerate(train_loader):
-            states = encoder.forward(data[0].to(gpuid), encoder_weights).detach().cpu().numpy()
-            nexts = encoder.forward(data[2].to(gpuid), encoder_weights).detach().cpu().numpy()
+            states = encoder.forward(data[1].to(gpuid), encoder_weights).detach().cpu().numpy()
+            nexts = encoder.forward(data[3].to(gpuid), encoder_weights).detach().cpu().numpy()
 
-            for x_t, u, x_tt in zip(states, data[1], nexts):
+            for x_t, u, x_tt in zip(states, data[2], nexts):
                 collector.add(x_t, u, x_tt, task_id)
+
+    def sample_action(self, task_id):
+        idx = np.random.randint(0, len(self.actions[task_id]))
+        action = self.actions[task_id][idx]
+        # print(f'Sampled action: {idx} -> {action}')
+        return action
+
+    def empty(self, task_id):
+        return len(self.images) == 0 or len(self.images[task_id]) == 0
