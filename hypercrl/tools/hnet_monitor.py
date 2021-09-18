@@ -32,7 +32,7 @@ class MonitorHnet(MonitorRL):
     def train_step(self, loss_task, loss_reg, dTheta, grad_tloss, weights):
         self.loss_task += loss_task.item()
         self.loss_reg += loss_reg.item()
-        if self.train_iter % self.print_train_every == 0:
+        if self.train_iter > 0 and self.train_iter % self.print_train_every == 0:
             self.loss_task /= self.print_train_every
             self.loss_reg /= self.print_train_every
             loss_tot = self.loss_reg + self.loss_task
@@ -81,7 +81,7 @@ class MonitorHnet(MonitorRL):
 
         every_iter = self.srl_print_train_every
 
-        if self.train_iter % every_iter == 0:
+        if self.train_iter > 0 and self.train_iter % every_iter == 0:
             self.loss_task_srl /= every_iter
             self.loss_reg_srl /= every_iter
             loss_tot = self.loss_reg_srl + self.loss_task_srl

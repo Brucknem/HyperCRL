@@ -227,7 +227,7 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
                 loss_inverse_model = inverse_model_loss_fn(a_t, predicted_actions)
 
             # Robotic Priors loss
-            with timeit_context(total_time_priors, "Calculate priors total"):
+            with timeit_context(total_time_priors):
                 loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability = calculate_priors(
                     priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collector, task_id, x_t, x_tt)
 

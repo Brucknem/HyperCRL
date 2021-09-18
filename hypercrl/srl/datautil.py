@@ -10,6 +10,9 @@ import hypercrl.dataset.datautil
 from hypercrl.hypercl import HyperNetwork
 from hypercrl.srl import ResNet18Encoder
 
+import pathlib
+import pandas as pd
+
 
 class DataCollector:
     """
@@ -36,6 +39,12 @@ class DataCollector:
         self.image_dims = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
 
         self.max_capacity = hparams.vision_params.collector_max_capacity
+
+        self.save_path = hparams.vision_params.save_path
+        self.save_every = hparams.vision_params.save_every
+
+        self.load_max = hparams.vision_params.load_max
+        self.load_suffix = hparams.vision_params.load_suffix
 
     def num_tasks(self):
         return len(self.images)
@@ -78,6 +87,8 @@ class DataCollector:
         if action not in self.same_actions[task_id]:
             self.same_actions[task_id][action] = []
         self.same_actions[task_id][action].append(ind)
+
+        self.save()
 
         self.delete_on_max_capacity(task_id)
 
@@ -222,3 +233,102 @@ class DataCollector:
 
     def empty(self, task_id):
         return len(self.images) == 0 or len(self.images[task_id]) == 0
+
+    def save(self):
+        for task_id in self.images.keys():
+            if len(self.images[task_id]) < self.save_every:
+                continue
+
+            save_path = pathlib.Path(self.save_path).joinpath(str(int(time.time())))
+            save_path = pathlib.Path(save_path).joinpath(str(task_id))
+            image_path = save_path.joinpath("images")
+            nexts_path = save_path.joinpath("nexts")
+
+            for p in [save_path, image_path, nexts_path]:
+                p.mkdir(parents=True, exist_ok=True)
+
+            actions_path = save_path.joinpath("actions.csv")
+            rewards_path = save_path.joinpath("rewards.csv")
+            indices_path = save_path.joinpath("indices.csv")
+
+            actions = pd.DataFrame(np.array(self.actions[task_id]).squeeze())
+            rewards = pd.DataFrame(np.array(self.rewards[task_id]).squeeze())
+            indices = pd.DataFrame(
+                [1 if i in self.train_inds[task_id] else 0 for i in range(len(self.images[task_id]))])
+            last_saved_index = 0
+            if actions_path.exists():
+                old_actions = pd.read_csv(actions_path, index_col=False)
+                old_rewards = pd.read_csv(rewards_path, index_col=False)
+                old_indices = pd.read_csv(indices_path, index_col=False)
+                old_actions.columns = actions.columns
+                old_rewards.columns = rewards.columns
+                old_indices.columns = indices.columns
+
+                last_saved_index = len(old_actions)
+                actions = old_actions.append(actions)
+                rewards = old_rewards.append(rewards)
+                indices = old_indices.append(indices)
+
+            actions.to_csv(actions_path, index=False)
+            rewards.to_csv(rewards_path, index=False)
+            indices.to_csv(indices_path, index=False)
+
+            for i in range(len(self.images[task_id])):
+                cv2.imwrite(str(image_path.joinpath(f"img_{i + last_saved_index}.png")),
+                            self.images[task_id][i].reshape(
+                                (self.image_dims[2], self.image_dims[3], self.image_dims[1])))
+                cv2.imwrite(str(nexts_path.joinpath(f"next_{i + last_saved_index}.png")),
+                            self.nexts[task_id][i].reshape(
+                                (self.image_dims[2], self.image_dims[3], self.image_dims[1])))
+
+            self.images[task_id] = []
+            self.nexts[task_id] = []
+            self.actions[task_id] = []
+            self.rewards[task_id] = []
+
+    def load(self):
+        load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
+        for task_id in [x.name for x in load_path_base.iterdir() if x.is_dir()]:
+            self.images[task_id] = []
+            self.nexts[task_id] = []
+            self.actions[task_id] = []
+            self.rewards[task_id] = []
+            self.train_inds[task_id] = []
+            self.val_inds[task_id] = []
+
+            load_path = load_path_base.joinpath(str(task_id))
+            image_path = load_path.joinpath("images")
+            nexts_path = load_path.joinpath("nexts")
+
+            actions = pd.read_csv(str(load_path.joinpath("actions.csv"))).to_numpy()
+            actions = list(np.expand_dims(actions, axis=2))
+
+            rewards = list(pd.read_csv(str(load_path.joinpath("rewards.csv"))).to_numpy().squeeze())
+            indices = pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze()
+            train_inds = list(np.where(indices)[0])
+
+            p = rewards
+            p = p - min(p)
+            p = p / sum(p)
+            indices_to_keep = [i for i in np.random.choice(range(len(rewards)), size=self.load_max, replace=False, p=p)]
+
+            for ind in indices_to_keep:
+                running_index = len(self.images[task_id])
+                if running_index % 100 == 0:
+                    print(f'Loaded {running_index} / {len(indices_to_keep)}')
+                img_path = image_path.joinpath(f'img_{ind}.png')
+                x_t = cv2.imread(str(img_path)).reshape(self.image_dims[1:]).flatten()
+                next_path = nexts_path.joinpath(f'next_{ind}.png')
+                x_tt = cv2.imread(str(next_path)).reshape(self.image_dims[1:]).flatten()
+                u = actions[ind]
+                r = rewards[ind]
+
+                self.images[task_id].append(x_t)
+                self.nexts[task_id].append(x_tt)
+                self.actions[task_id].append(u)
+                self.rewards[task_id].append(r)
+
+                if ind in train_inds:
+                    self.train_inds[task_id].append(running_index)
+                else:
+                    self.val_inds[task_id].append(running_index)

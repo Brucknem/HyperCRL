@@ -413,14 +413,16 @@ def get_image_obs(obs: np.ndarray, hparams):
     # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
     # img = img / 255.
     img = img.astype(np.uint8)
-    # cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
-    # cv2.waitKey(1)
+    if hparams.vision_params.debug_visualization:
+        cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
+        cv2.waitKey(1)
     # print(f'Get image obs time: {ts - time.time()} s')
     return img
 
 
-def visualize_state(state):
-    return
+def visualize_state(state, hparams):
+    if not hparams.vision_params.debug_visualization:
+        return
     s = (torch.clone(state).detach().cpu().numpy())
     s = (s - min(s[0])) / (max(s[0]) - min(s[0]))
     w = 1600 // s.shape[1]
@@ -567,7 +569,7 @@ def run(hparams, render=False):
                     x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
                 encoder_times.append(time.time() - encode_time)
 
-                visualize_state(x_t_hat)
+                visualize_state(x_t_hat, hparams)
 
                 act_time = time.time()
                 u_t = agent.act(x_t_hat, task_id=task_id).detach().cpu().numpy()

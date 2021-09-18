@@ -903,7 +903,7 @@ def default_arg_door_pose(hparams):
 
     # Tasks
     hparams.num_tasks = 5
-    hparams.init_rand_steps = 5000  # MASTER_THESIS Original: 2000
+    hparams.init_rand_steps = 500000  # MASTER_THESIS Original: 2000
     hparams.max_iteration = 60000
     hparams.dynamics_update_every = 200
     hparams.out_var = True
@@ -983,5 +983,12 @@ def default_arg_door_pose(hparams):
 
         hparams.vision_params.use_priors = True
         hparams.vision_params.use_fast_priors = False
+
+        hparams.vision_params.debug_visualization = True
+
+        hparams.vision_params.save_path = "/mnt/local_data/datasets/master-thesis"
+        hparams.vision_params.save_every = 2000
+        hparams.vision_params.load_max = 10000
+        hparams.vision_params.load_suffix = "1631981744"
 
     return hparams
