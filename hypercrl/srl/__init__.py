@@ -1,4 +1,4 @@
-from .models import ResNet18Encoder, MLP
+from .models import ResNet18EncoderHnet, MLP
 from .srl import SRL
 from .srl_dataset import SRLDataSet
 from .srl_trainer import SRLTrainer

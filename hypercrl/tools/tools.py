@@ -21,6 +21,7 @@ from hypercrl import dataset
 
 from hypercrl import dataset
 from hypercrl.envs.cl_env import CLEnvHandler, EnvSpecs
+from hypercrl.tools.default_arg import VisionParams
 
 
 def reset_seed(seed):
@@ -126,9 +127,11 @@ class MonitorBase():
         self.collector = collector
         self.btest = btest
         self.tflog_dir = os.path.join(hparams.save_folder, f'TB{hparams.env}_{hparams.model}_{hparams.seed}')
-        self.writer = SummaryWriter(log_dir=self.tflog_dir)
+        self.timestamp = int(time.time())
+        self.writer = SummaryWriter(log_dir=self.tflog_dir, filename_suffix=str(self.timestamp))
 
         self.val_stats = []
+        self.print_model = self.hparams.model
 
         # For debug model shift
         self.net_param_ckpt = {}
@@ -136,7 +139,7 @@ class MonitorBase():
 
     def log_hparams(self):
         hp_dict = self.hparams.__dict__
-        with open(f'{self.tflog_dir}/hparams.csv', 'w') as f:
+        with open(f'{self.tflog_dir}/hparams.{self.timestamp}.csv', 'w') as f:
             fieldnames = ['config', 'value']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -146,6 +149,10 @@ class MonitorBase():
                     val = "None"
                 if isinstance(val, list):
                     val = str(val)
+                if isinstance(val, VisionParams):
+                    for key, val in val.__dict__.items():
+                        writer.writerow({'config': 'vision_params.' + key, 'value': val})
+                    continue
                 writer.writerow({'config': key, 'value': val})
 
     def set_optimizer(self, optimizer):
@@ -274,7 +281,7 @@ class MonitorBase():
     def save(self):
         hp = self.hparams
         # Save training csv
-        with open(f'{hp.save_folder}/{hp.env}_{hp.model}_{hp.seed}.csv', 'w') as f:
+        with open(f'{hp.save_folder}/{hp.env}_{self.print_model}_{hp.seed}.csv', 'w') as f:
             fieldnames = ['task', 'time', 'diff']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
 

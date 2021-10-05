@@ -20,7 +20,7 @@ from gym.envs.robotics.rotations import (quat2euler, subtract_euler, quat_mul, \
 
 import hypercrl.srl
 from hypercrl.envs.rs import PandaDoor
-from hypercrl.srl import SRL, SRLTrainer, SRLDataSet, ResNet18Encoder
+from hypercrl.srl import SRL, SRLTrainer, SRLDataSet, ResNet18EncoderHnet
 
 
 def reshape(img, shape):
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     low, high = env.action_spec
     print(x_t, low, high)
 
-    encoder = ResNet18Encoder(128)
+    encoder = ResNet18EncoderHnet(128)
     srl = SRL(encoder=encoder)
     srl_dataset = SRLDataSet(horizon=horizon)
     trainer = SRLTrainer(srl=srl)

@@ -15,6 +15,7 @@ from hypercrl.control import MPC
 from hypercrl.hypercl import HyperNetwork, MLP, ChunkedHyperNetworkHandler, MainNetInterface, ResNet
 from hypercrl.hypercl.utils import ewc_regularizer as ewc
 from hypercrl.hypercl.utils import si_regularizer as si
+from ..tools.default_arg import VisionParams
 
 
 def get_recon_loss(decoder_out, X, dist, reduction='sum', weight=1):
@@ -160,27 +161,27 @@ def build_model_hnet(hparams, num_input=2):
     return mnet, hnet
 
 
-def generate_hnet(hparams, param_shapes):
-    if hparams.model == "chunked_hnet":
+def generate_hnet(model, param_shapes, hnet_arch, emb_size, hnet_act, chunk_dim=None, cemb_size=None):
+    if model == "chunked_hnet":
         hnet = ChunkedHyperNetworkHandler(param_shapes,
-                                          chunk_dim=hparams.chunk_dim,
-                                          layers=hparams.hnet_arch,
-                                          activation_fn=str_to_act(hparams.hnet_act),
-                                          te_dim=hparams.emb_size,
-                                          ce_dim=hparams.cemb_size,
+                                          chunk_dim=chunk_dim,
+                                          layers=hnet_arch,
+                                          activation_fn=str_to_act(hnet_act),
+                                          te_dim=emb_size,
+                                          ce_dim=cemb_size,
                                           )
     else:
         # num_weights_class_net = MLP.shapes_to_num_weights(mnet.param_shapes)
         hnet = HyperNetwork(param_shapes,
-                            layers=hparams.hnet_arch,
-                            te_dim=hparams.emb_size,
-                            activation_fn=str_to_act(hparams.hnet_act)
+                            layers=hnet_arch,
+                            te_dim=emb_size,
+                            activation_fn=str_to_act(hnet_act)
                             )
     return hnet
 
 
 def calculate_compression_ratio(hnet, hparams, param_shapes):
-    if isinstance(hparams, Hparams):
+    if isinstance(hparams, Hparams) or isinstance(hparams, VisionParams):
         hparams.num_weights_class_hyper_net = sum(p.numel() for p in
                                                   hnet.parameters() if p.requires_grad)
         hparams.num_weights_class_net = MainNetInterface.shapes_to_num_weights(param_shapes)

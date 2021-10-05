@@ -4,7 +4,7 @@ import random
 import matplotlib
 import torchvision.models
 
-from hypercrl.srl import ResNet18Encoder
+from hypercrl.srl import ResNet18EncoderHnet
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

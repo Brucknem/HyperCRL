@@ -1,11 +1,6 @@
-class VisionParams:
-    def __init__(self):
-        pass
-
-
 class Hparams():
     @staticmethod
-    def add_hnet_hparams(hparams):
+    def add_hnet_hparams(hparams, env):
         # Hypernetwork
         if hparams.h_dims == [32, 32]:
             hparams.hnet_arch = [16, 16]
@@ -24,11 +19,11 @@ class Hparams():
         elif hparams.h_dims == [100, 100]:
             hparams.hnet_arch = [40, 40]
 
-        if hparams.env == "door":
+        if env == "door":
             hparams.hnet_act = "elu"
-        elif hparams.env == "door_pose":
+        elif env == "door_pose":
             hparams.hnet_act = "relu"
-        elif hparams.env == "pusher":
+        elif env == "pusher":
             hparams.hnet_act = "elu"
         else:
             hparams.hnet_act = 'relu'
@@ -45,7 +40,7 @@ class Hparams():
         hparams.lr_hyper = 0.0001
         hparams.grad_max_norm = 5
 
-        if hparams.env == "door_pose" or hparams.env == "pusher_slide":
+        if env == "door_pose" or env == "pusher_slide":
             hparams.beta = 0.5
         else:
             hparams.beta = 0.05
@@ -107,6 +102,11 @@ class Hparams():
         # "-1", all training samples are us
 
         return hparams
+
+
+class VisionParams(Hparams):
+    def __init__(self):
+        pass
 
 
 def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False, vision=False):
@@ -894,6 +894,53 @@ def default_arg_door(hparams):
     return hparams
 
 
+def default_vision_params(hparams):
+    hparams.state_dim = 512
+    hparams.out_dim = hparams.state_dim
+    hparams.dnn_out = "state"
+    # hparams.normalize_xu = False
+
+    hparams.vision_params.eval_every = 1000
+
+    hparams.vision_params.model = "hnet"
+    hparams.vision_params.grad_max_norm = 5
+
+    hparams.vision_params.camera_widths = 224
+    hparams.vision_params.camera_heights = 224
+    hparams.vision_params.collector_max_capacity = 10000
+
+    hparams.vision_params.dont_train_srl = False
+    hparams.vision_params.bs = 100
+    hparams.vision_params.lr_hyper = 0.01  # MASTER_THESIS 0.001
+
+    hparams.vision_params.in_dim = 512
+    hparams.vision_params.h_dims = [200] * 4
+    hparams.vision_params.out_var = False
+    hparams.vision_params.use_batch_norm = False
+    hparams.vision_params.dropout_rate = -1
+
+    hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
+    hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
+    hparams.vision_params.forward_model_lr = 0.001
+    hparams.vision_params.inverse_model_dims = [200, 200, 200, 200]
+    hparams.vision_params.inverse_model_lr = 0.001
+
+    hparams.vision_params.srl_update_every = 1000
+    hparams.vision_params.train_vision_iters = 500000
+    hparams.vision_params.print_train_every = 50
+    hparams.vision_params.sample_known_action_prob = 0.1
+
+    hparams.vision_params.use_priors = True
+    hparams.vision_params.use_fast_priors = False
+
+    hparams.vision_params.debug_visualization = True
+
+    hparams.vision_params.save_path = "/mnt/local_data/datasets/master-thesis"
+    hparams.vision_params.save_every = -1
+    hparams.vision_params.load_max = 100
+    hparams.vision_params.load_suffix = "1631981744"
+
+
 def default_arg_door_pose(hparams):
     hparams.state_dim = 26
     hparams.dnn_out = "diff"  # or "state"
@@ -950,45 +997,6 @@ def default_arg_door_pose(hparams):
     hparams.collector_max_capacity = -1
 
     # Vision-Based
-    is_vision_based = hparams.vision_params is not None
-    if is_vision_based:
-        hparams.state_dim = 512
-        hparams.out_dim = hparams.state_dim
-        hparams.dnn_out = "state"
-        # hparams.normalize_xu = False
-
-        hparams.vision_params.camera_widths = 224
-        hparams.vision_params.camera_heights = 224
-        hparams.vision_params.collector_max_capacity = 10000
-
-        hparams.vision_params.dont_train_srl = False
-        hparams.vision_params.bs = 100
-        hparams.vision_params.lr_hyper = 0.001
-
-        hparams.vision_params.in_dim = 512
-        hparams.vision_params.hdims = [200] * 4
-        hparams.vision_params.out_var = False
-        hparams.vision_params.use_batch_norm = False
-        hparams.vision_params.dropout_rate = -1
-
-        hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
-        hparams.vision_params.forward_model_lr = 0.001
-        hparams.vision_params.inverse_model_dims = [200, 200, 200, 200]
-        hparams.vision_params.inverse_model_lr = 0.001
-
-        hparams.vision_params.srl_update_every = 1000
-        hparams.vision_params.train_vision_iters = 500
-        hparams.vision_params.print_train_every = 50
-        hparams.vision_params.sample_known_action_prob = 0.1
-
-        hparams.vision_params.use_priors = True
-        hparams.vision_params.use_fast_priors = False
-
-        hparams.vision_params.debug_visualization = True
-
-        hparams.vision_params.save_path = "/mnt/local_data/datasets/master-thesis"
-        hparams.vision_params.save_every = 2000
-        hparams.vision_params.load_max = 10000
-        hparams.vision_params.load_suffix = "1631981744"
+    hparams.vision_params is not None and default_vision_params(hparams)
 
     return hparams

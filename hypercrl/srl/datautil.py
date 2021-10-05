@@ -8,7 +8,7 @@ from torch.utils.data import TensorDataset
 
 import hypercrl.dataset.datautil
 from hypercrl.hypercl import HyperNetwork
-from hypercrl.srl import ResNet18Encoder
+from hypercrl.srl import ResNet18EncoderHnet
 
 import pathlib
 import pandas as pd
@@ -86,6 +86,8 @@ class DataCollector:
         action = tuple(np.squeeze(u))
         if action not in self.same_actions[task_id]:
             self.same_actions[task_id][action] = []
+        else:
+            print("Yeet")
         self.same_actions[task_id][action].append(ind)
 
         self.save()
@@ -140,14 +142,17 @@ class DataCollector:
         images = torch.FloatTensor(np.hstack(self.images[task_id])).reshape(self.image_dims)
         actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
         nexts = torch.FloatTensor(np.hstack(self.nexts[task_id])).reshape(self.image_dims)
+        rewards = torch.FloatTensor(np.hstack(self.rewards[task_id])).T
 
         train_inds = self.train_inds[task_id]
         val_inds = self.val_inds[task_id]
 
         if ds_range == "second_half":
             train_inds = train_inds[len(train_inds) // 2:]
-        train_set = TensorDataset(indices[train_inds], images[train_inds], actions[train_inds], nexts[train_inds])
-        val_set = TensorDataset(indices[val_inds], images[val_inds], actions[val_inds], nexts[val_inds])
+        train_set = TensorDataset(indices[train_inds], images[train_inds], actions[train_inds], nexts[train_inds],
+                                  rewards[train_inds])
+        val_set = TensorDataset(indices[val_inds], images[val_inds], actions[val_inds], nexts[val_inds],
+                                rewards[val_inds])
 
         return train_set, val_set
 
@@ -170,14 +175,17 @@ class DataCollector:
 
         images = np.array([])
         nexts = np.array([])
+        rewards = np.array([])
+
         if indices:
             indices.remove(int(idx))
             if indices:
                 indices = np.array(indices)
                 images = np.array([self.images[task_id][i] for i in indices]).reshape(self.image_dims)
                 nexts = np.array([self.nexts[task_id][i] for i in indices]).reshape(self.image_dims)
+                rewards = np.array([self.rewards[task_id][i] for i in indices]).T
 
-        return images, nexts
+        return images, nexts, rewards
 
     def get_by_action(self, task_id, u):
         if isinstance(u, torch.Tensor):
@@ -204,7 +212,7 @@ class DataCollector:
 
         return images, actions, nexts
 
-    def convert(self, task_id: int, encoder: ResNet18Encoder, hnet: HyperNetwork,
+    def convert(self, task_id: int, encoder: ResNet18EncoderHnet, hnet: HyperNetwork,
                 collector: hypercrl.dataset.datautil.DataCollector, gpuid: str):
         collector.clear()
 
@@ -235,6 +243,9 @@ class DataCollector:
         return len(self.images) == 0 or len(self.images[task_id]) == 0
 
     def save(self):
+        if self.save_every < 0:
+            return
+
         for task_id in self.images.keys():
             if len(self.images[task_id]) < self.save_every:
                 continue
@@ -289,6 +300,7 @@ class DataCollector:
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
         for task_id in [x.name for x in load_path_base.iterdir() if x.is_dir()]:
+            task_id = int(task_id)
             self.images[task_id] = []
             self.nexts[task_id] = []
             self.actions[task_id] = []
@@ -304,13 +316,18 @@ class DataCollector:
             actions = list(np.expand_dims(actions, axis=2))
 
             rewards = list(pd.read_csv(str(load_path.joinpath("rewards.csv"))).to_numpy().squeeze())
-            indices = pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze()
+            indices = [True if np.random.random() < 0.75 else False for _ in
+                       range(len(rewards))]  # pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze()
             train_inds = list(np.where(indices)[0])
 
             p = rewards
             p = p - min(p)
             p = p / sum(p)
+            p = None
             indices_to_keep = [i for i in np.random.choice(range(len(rewards)), size=self.load_max, replace=False, p=p)]
+
+            tmp_train_inds = []
+            tmp_val_inds = []
 
             for ind in indices_to_keep:
                 running_index = len(self.images[task_id])
@@ -323,12 +340,12 @@ class DataCollector:
                 u = actions[ind]
                 r = rewards[ind]
 
-                self.images[task_id].append(x_t)
-                self.nexts[task_id].append(x_tt)
-                self.actions[task_id].append(u)
-                self.rewards[task_id].append(r)
+                self.add(x_t, u, x_tt, r, task_id)
 
                 if ind in train_inds:
-                    self.train_inds[task_id].append(running_index)
+                    tmp_train_inds.append(running_index)
                 else:
-                    self.val_inds[task_id].append(running_index)
+                    tmp_val_inds.append(running_index)
+
+            self.train_inds[task_id] = tmp_train_inds
+            self.val_inds[task_id] = tmp_val_inds

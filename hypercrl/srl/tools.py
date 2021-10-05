@@ -8,7 +8,7 @@ import numpy as np
 import hypercrl.srl.models
 from hypercrl.hypercl import MLP
 from hypercrl.model.tools import initialize_hnet, calculate_compression_ratio, generate_hnet
-from hypercrl.srl import ResNet18Encoder
+from hypercrl.srl import ResNet18EncoderHnet
 from hypercrl.srl.datautil import DataCollector
 from hypercrl.hypercl.utils import hnet_regularizer as hreg
 from hypercrl.srl.robotic_priors import RoboticPriors, SlownessPrior, CausalityPrior, RepeatabilityPrior, \
@@ -44,16 +44,18 @@ def timeit_context(arr, name=""):
 
 
 def build_vision_model_hnet(hparams):
-    encoder_mnet = MLP(n_in=hparams.vision_params.in_dim,
-                       n_out=hparams.state_dim, hidden_layers=hparams.vision_params.hdims,
-                       no_weights=True, out_var=hparams.vision_params.out_var,
-                       use_batch_norm=hparams.vision_params.use_batch_norm,
-                       dropout_rate=hparams.vision_params.dropout_rate)
+    vparams = hparams.vision_params
+    encoder_mnet = MLP(n_in=vparams.in_dim,
+                       n_out=hparams.state_dim, hidden_layers=vparams.hdims,
+                       no_weights=True, out_var=vparams.out_var,
+                       use_batch_norm=vparams.use_batch_norm,
+                       dropout_rate=vparams.dropout_rate)
     print('Constructed Vision MLP with shapes: ', encoder_mnet.param_shapes)
-    encoder_mnet = ResNet18Encoder(encoder_mnet, hparams)
-    hnet = generate_hnet(hparams, encoder_mnet.param_shapes)
-    calculate_compression_ratio(hnet, hparams, encoder_mnet.param_shapes)
-    initialize_hnet(hnet, hparams)
+    encoder_mnet = ResNet18EncoderHnet(encoder_mnet, vparams)
+    hnet = generate_hnet(vparams.model, encoder_mnet.param_shapes, vparams.hnet_arch, vparams.emb_size,
+                         vparams.hnet_act)
+    calculate_compression_ratio(hnet, vparams, encoder_mnet.param_shapes)
+    initialize_hnet(hnet, vparams)
 
     return encoder_mnet, hnet
 
@@ -66,6 +68,31 @@ def reload_vision_model_hnet(hparams):
     # MASTER_THESIS really load models
 
     return encoder_mnet, encoder_hnet, checkpoint, collector
+
+
+def generate_srl_losses(hparams):
+    priors = (SlownessPrior(), VariabilityPrior(), ProportionalityPrior(), RepeatabilityPrior(), CausalityPrior())
+
+    forward_model = hypercrl.srl.models.MLP(hparams.state_dim + hparams.control_dim,
+                                            hparams.vision_params.forward_model_dims,
+                                            hparams.state_dim)
+    inverse_model = hypercrl.srl.models.MLP(hparams.state_dim,
+                                            hparams.vision_params.forward_model_dims,
+                                            hparams.control_dim)
+    gpuid = hparams.gpuid
+    forward_model.to(gpuid)
+    inverse_model.to(gpuid)
+    forward_model.train()
+    inverse_model.train()
+
+    inverse_misc = (
+        inverse_model, torch.optim.Adam(inverse_model.parameters(), lr=hparams.vision_params.inverse_model_lr),
+        torch.nn.MSELoss())
+    forward_misc = (
+        forward_model, torch.optim.Adam(forward_model.parameters(), lr=hparams.vision_params.forward_model_lr),
+        torch.nn.MSELoss())
+
+    return priors, forward_misc, inverse_misc
 
 
 def augment_model(task_id, mnet, hnet, collector, hparams):
@@ -84,21 +111,11 @@ def augment_model(task_id, mnet, hnet, collector, hparams):
     #     mll = TaskLoss(hparams, mnet)
 
     # MASTER_THESIS Use separate priors
-    priors = (SlownessPrior(), VariabilityPrior(), ProportionalityPrior(), RepeatabilityPrior(), CausalityPrior())
-
-    forward_model = hypercrl.srl.models.MLP(hparams.state_dim + hparams.control_dim,
-                                            hparams.vision_params.forward_model_dims,
-                                            hparams.state_dim)
-    inverse_model = hypercrl.srl.models.MLP(hparams.state_dim,
-                                            hparams.vision_params.forward_model_dims,
-                                            hparams.control_dim)
 
     # (Re)Put model to GPU
     gpuid = hparams.gpuid
     mnet.to(gpuid)
     hnet.to(gpuid)
-    forward_model.to(gpuid)
-    inverse_model.to(gpuid)
 
     # Optimize over the GP model params and likelihood param
     mnet.train()
@@ -132,14 +149,7 @@ def augment_model(task_id, mnet, hnet, collector, hparams):
     # the remaining ones stay constant.
     emb_optimizer = torch.optim.Adam([hnet.get_task_emb(task_id)], lr=hparams.vision_params.lr_hyper)
 
-    inverse_misc = (
-        inverse_model, torch.optim.Adam(inverse_model.parameters(), lr=hparams.vision_params.inverse_model_lr),
-        torch.nn.MSELoss())
-    forward_misc = (
-        forward_model, torch.optim.Adam(forward_model.parameters(), lr=hparams.vision_params.forward_model_lr),
-        torch.nn.MSELoss())
-
-    trainer_misc = (targets, priors, forward_misc, inverse_misc, theta_optimizer, emb_optimizer,
+    trainer_misc = (targets, *generate_srl_losses(hparams), theta_optimizer, emb_optimizer,
                     regularized_params)  # , fisher_ests, si_omega)
 
     return trainer_misc
@@ -163,7 +173,12 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
     regged_outputs = None
 
     fisher_ests, si_omega = None, None
-    targets, priors, forward_misc, inverse_misc, theta_optimizer, emb_optimizer, regularized_params = trainer_misc
+    if hnet:
+        targets, priors, forward_misc, inverse_misc, theta_optimizer, emb_optimizer, regularized_params = trainer_misc
+    else:
+        priors, forward_misc, inverse_misc = trainer_misc
+        priors, theta_optimizer = priors
+        regularized_params = list(mnet.parameters())
     forward_model, forward_model_optimizer, forward_model_loss_fn = forward_misc
     inverse_model, inverse_model_optimizer, inverse_model_loss_fn = inverse_misc
 
@@ -179,31 +194,37 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
     total_time_inverse_optimize = []
     total_time_priors = []
 
+    mnet_weights = None
+
     it = 0
     while it < hparams.vision_params.train_vision_iters:
         mnet.to(gpuid)
-        hnet.to(gpuid)
+        hnet and hnet.to(gpuid)
         forward_model.to(gpuid)
         inverse_model.to(gpuid)
         mnet.train()
-        hnet.train()
+        hnet and hnet.train()
         forward_model.train()
         inverse_model.train()
 
         for i, data in enumerate(train_loader):
+            regularized_params = list(mnet.parameters()) if not hnet else regularized_params
+
             iter_time = time.time()
             if it % 20 == 0:
                 print(f'Iteration: {it} / {hparams.vision_params.train_vision_iters}')
 
             # Train theta and task embedding.
             theta_optimizer.zero_grad()
-            emb_optimizer.zero_grad()
+            if hnet:
+                emb_optimizer.zero_grad()
 
-            with timeit_context(total_time_hnet):
-                mnet_weights = hnet.forward(task_id)
+            if hnet:
+                with timeit_context(total_time_hnet):
+                    mnet_weights = hnet.forward(task_id)
 
-            idx, x_t, a_t, x_tt = data
-            x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
+            idx, x_t, a_t, x_tt, rewards = data
+            x_t, a_t, x_tt, rewards = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid), rewards.to(gpuid)
 
             if hparams.model == "hnet_si":
                 si.si_update_optim_step(mnet, mnet_weights, task_id)
@@ -228,21 +249,23 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
 
             # Robotic Priors loss
             with timeit_context(total_time_priors):
-                loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability = calculate_priors(
-                    priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collector, task_id, x_t, x_tt)
+                loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality \
+                    = calculate_priors(priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collector, task_id, x_t,
+                                       x_tt, rewards)
 
             with timeit_context(total_time_hnet_optimize):
                 # We already compute the gradients, to then be able to compute delta
                 # theta.
                 loss_task = loss_priors + loss_forward_model + loss_inverse_model
-                loss_task.backward(retain_graph=True, create_graph=hparams.backprop_dt and calc_reg)
+                loss_task.backward(retain_graph=True,
+                                   create_graph=hnet is not None and hparams.vision_params.backprop_dt and calc_reg)
                 loss_forward_model.backward(retain_graph=True)
                 loss_inverse_model.backward(retain_graph=True)
-                torch.nn.utils.clip_grad_norm_(hnet.get_task_emb(task_id), hparams.grad_max_norm)
+                hnet and torch.nn.utils.clip_grad_norm_(hnet.get_task_emb(task_id), hparams.grad_max_norm)
 
                 # The task embedding is only trained on the task-specific loss.
                 # Note, the gradients accumulated so far are from "loss_task".
-                emb_optimizer.step()
+                hnet and emb_optimizer.step()
 
                 # SI
                 if hparams.model == "hnet_si":
@@ -298,7 +321,7 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
 
                         grad_tloss = (grad_tloss, grad_full, grad_diff_norm, grad_cos)
 
-                torch.nn.utils.clip_grad_norm_(regularized_params, hparams.grad_max_norm)
+                torch.nn.utils.clip_grad_norm_(regularized_params, hparams.vision_params.grad_max_norm)
                 theta_optimizer.step()
 
             with timeit_context(total_time_forward_optimize):
@@ -311,11 +334,12 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
 
             total_time_iter.append(time.time() - iter_time)
 
+            mnet_weights = regularized_params
             logger.train_vision_step(loss_task, loss_priors, loss_slowness, loss_variability, loss_proportionality,
-                                     loss_repeatability, loss_forward_model, loss_inverse_model, loss_reg, dTheta,
-                                     grad_tloss, mnet_weights, x_t)
+                                     loss_repeatability, loss_causality, loss_forward_model, loss_inverse_model,
+                                     loss_reg, dTheta, grad_tloss, mnet_weights, x_t)
             # Validate
-            # logger.validate(mll)
+            # logger.validate(priors, forward_misc, inverse_misc)
 
             it += 1
             if it >= hparams.vision_params.train_vision_iters:
@@ -335,7 +359,7 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
     logger.writer.add_scalar('time/calculate_priors', np.mean(total_time_priors), (train_it + 1) * it)
 
 
-def calculate_priors(priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collector, task_id, x_t, x_tt):
+def calculate_priors(priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collector, task_id, x_t, x_tt, r):
     loss_priors = 0
     if not hparams.vision_params.use_priors:
         return 0, 0, 0, 0, 0
@@ -348,46 +372,56 @@ def calculate_priors(priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collec
     loss_priors += loss_variability
 
     if hparams.vision_params.use_fast_priors:
-        return loss_priors, loss_slowness, loss_variability, 0, 0
+        return loss_priors, loss_slowness, loss_variability, 0, 0, 0
 
     states = []
     next_states = []
+    rewards = []
     other_states = []
     next_other_states = []
+    other_rewards = []
     with timeit_context([]):  # , "Get same actions"):
         for index, id in enumerate(idx):
-            other_x_t, other_x_tt = srl_collector.get_same_actions(task_id, id, train=True)
+            other_x_t, other_x_tt, other_r = srl_collector.get_same_actions(task_id, id, train=True)
             num_other = len(other_x_t)
             if num_other <= 0:
                 continue
             states = states + [x_t[index].unsqueeze(dim=0)] * num_other
             next_states = next_states + [x_tt[index].unsqueeze(dim=0)] * num_other
+            rewards = rewards + [r[index].unsqueeze(dim=0)] * num_other
             other_states = other_states + [torch.from_numpy(other_x_t)]
             next_other_states = next_other_states + [torch.from_numpy(other_x_tt)]
+            other_rewards = other_rewards + [torch.from_numpy(other_r)]
 
     if not states:
-        return loss_priors, loss_slowness, loss_variability, 0, 0
+        return loss_priors, loss_slowness, loss_variability, 0, 0, 0
 
     with timeit_context([]):  # , "Calculate slow priors"):
         states = torch.cat(states)
         next_states = torch.cat(next_states)
         other_states = torch.cat(other_states)
         next_other_states = torch.cat(next_other_states)
+        rewards = torch.cat(rewards)
+        other_rewards = torch.cat(other_rewards)
         priors_loader = torch.utils.data.DataLoader(
-            TensorDataset(states, next_states, other_states, next_other_states), batch_size=hparams.bs,
+            TensorDataset(states, next_states, other_states, next_other_states, rewards, other_rewards),
+            batch_size=hparams.bs,
             shuffle=True, drop_last=False, num_workers=hparams.num_ds_worker)
         loss_proportionality = 0
         loss_repeatability = 0
+        loss_causality = 0
         for i, data in enumerate(priors_loader):
-            states, next_states, other_states, next_other_states = data
+            states, next_states, other_states, next_other_states, rewards, other_rewards = data
             other_states = mnet.forward(other_states.to(gpuid), mnet_weights)
             next_other_states = mnet.forward(next_other_states.to(gpuid), mnet_weights)
             loss_proportionality += proportionality_prior(states, next_states, other_states, next_other_states)
             loss_repeatability += repeatability_prior(states, next_states, other_states, next_other_states)
+            loss_causality += causality_prior(states, next_states, rewards.to(gpuid), other_rewards.to(gpuid))
 
-        scale = 10
-        loss_repeatability *= scale
-        loss_proportionality *= scale
+        # scale = 10
+        # loss_repeatability *= scale
+        # loss_proportionality *= scale
         loss_priors += loss_proportionality
         loss_priors += loss_repeatability
-    return loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability
+        loss_priors += loss_causality
+    return loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality
