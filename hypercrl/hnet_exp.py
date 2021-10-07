@@ -5,6 +5,7 @@ import matplotlib
 import torchvision.models
 
 from hypercrl.srl import ResNet18EncoderHnet
+from hypercrl.tools.default_arg import VisionParams
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -475,7 +476,7 @@ def run(hparams, render=False):
         agent = MPC(hparams, mnet, collector=collector, hnet=hnet)
 
         # Monitor
-        logger = MonitorHnet(hparams, agent, mnet, hnet, collector, encoder_mnet, encoder_hnet)
+        logger = MonitorHnet(hparams, agent, mnet, hnet, collector)
 
         # Start from scratch
         num_tasks_seen = 0
@@ -646,8 +647,9 @@ def hnet(env, robot="Panda", seed=None, savepath=None, resume=False, render=Fals
     hparams = HP(env=env, robot=robot, seed=seed, save_folder=savepath, resume=resume, vision=vision)
     hparams.model = "hnet"
 
-    hparams = Hparams.add_hnet_hparams(hparams)
-
+    hparams = Hparams.add_hnet_hparams(hparams, env)
+    hparams.vision_params = VisionParams.add_hnet_hparams(hparams.vision_params, env)
+    
     if play:
         play_model(hparams, runs)
     else:

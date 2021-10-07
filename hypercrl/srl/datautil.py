@@ -13,6 +13,8 @@ from hypercrl.srl import ResNet18EncoderHnet
 import pathlib
 import pandas as pd
 
+from hypercrl.srl.utils import sample_by_inverse_size
+
 
 class DataCollector:
     """
@@ -41,6 +43,7 @@ class DataCollector:
         self.max_capacity = hparams.vision_params.collector_max_capacity
 
         self.save_path = hparams.vision_params.save_path
+        self.save_path = pathlib.Path(self.save_path).joinpath(str(int(time.time())))
         self.save_every = hparams.vision_params.save_every
 
         self.load_max = hparams.vision_params.load_max
@@ -86,8 +89,6 @@ class DataCollector:
         action = tuple(np.squeeze(u))
         if action not in self.same_actions[task_id]:
             self.same_actions[task_id][action] = []
-        else:
-            print("Yeet")
         self.same_actions[task_id][action].append(ind)
 
         self.save()
@@ -99,13 +100,11 @@ class DataCollector:
             return
 
         while len(self.images[task_id]) > self.max_capacity:
-            probs = np.array(self.rewards[task_id])
-            inds = np.where(probs < np.median(probs))[0]
-            probs = probs[inds]
-            probs = -probs
-            probs = probs - min(probs)
-            probs = probs / sum(probs)
-            idx = np.random.choice(inds, p=probs)
+            remove_from = self.train_inds[task_id] if len(self.train_inds[task_id]) > 3 * len(
+                self.val_inds[task_id]) else self.val_inds[task_id]
+
+            idx = sample_by_inverse_size(np.array(self.rewards[task_id])[remove_from])
+            idx = remove_from[idx]
 
             if idx in self.train_inds[task_id]:
                 self.train_inds[task_id].remove(idx)
@@ -234,10 +233,20 @@ class DataCollector:
                 collector.add(x_t, u, x_tt, task_id)
 
     def sample_action(self, task_id):
-        idx = np.random.randint(0, len(self.actions[task_id]))
-        action = self.actions[task_id][idx]
+        least_same_action_indices = {key: len(value) for (key, value) in self.same_actions[task_id].items()}
+        probs = np.array(list(least_same_action_indices.values()))
+
+        if len(probs) == 1:
+            return self.actions[task_id][0]
+
+        probs = probs ** 2
+        probs = probs / sum(probs)
+        probs = 1 - probs
+        probs = probs / sum(probs)
+        idx = np.random.choice(len(least_same_action_indices), p=probs)
+        action = list(least_same_action_indices.keys())[idx]
         # print(f'Sampled action: {idx} -> {action}')
-        return action
+        return np.array(action)
 
     def empty(self, task_id):
         return len(self.images) == 0 or len(self.images[task_id]) == 0
@@ -250,8 +259,7 @@ class DataCollector:
             if len(self.images[task_id]) < self.save_every:
                 continue
 
-            save_path = pathlib.Path(self.save_path).joinpath(str(int(time.time())))
-            save_path = pathlib.Path(save_path).joinpath(str(task_id))
+            save_path = pathlib.Path(self.save_path).joinpath(str(task_id))
             image_path = save_path.joinpath("images")
             nexts_path = save_path.joinpath("nexts")
 
@@ -271,11 +279,12 @@ class DataCollector:
                 old_actions = pd.read_csv(actions_path, index_col=False)
                 old_rewards = pd.read_csv(rewards_path, index_col=False)
                 old_indices = pd.read_csv(indices_path, index_col=False)
+                last_saved_index = len(old_actions)
+
                 old_actions.columns = actions.columns
                 old_rewards.columns = rewards.columns
                 old_indices.columns = indices.columns
 
-                last_saved_index = len(old_actions)
                 actions = old_actions.append(actions)
                 rewards = old_rewards.append(rewards)
                 indices = old_indices.append(indices)
@@ -296,6 +305,9 @@ class DataCollector:
             self.nexts[task_id] = []
             self.actions[task_id] = []
             self.rewards[task_id] = []
+            self.train_inds[task_id] = []
+            self.val_inds[task_id] = []
+            self.same_actions[task_id] = {key: [None] * len(val) for key, val in self.same_actions[task_id].items()}
 
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)

@@ -5,18 +5,22 @@ import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from hypercrl.srl import layer_names
 from hypercrl.srl.tools import calculate_priors
 from hypercrl.tools import MonitorBase
 
 
 class MonitorSRL(MonitorBase):
-    def __init__(self, hparams, mnet, collector, btest):
+    def __init__(self, hparams, mnet, forward_model, inverse_model, collector, btest):
         super(MonitorSRL, self).__init__(hparams, mnet, collector, btest)
         self.eval_every = hparams.vision_params.eval_every
         self.print_train_every = hparams.vision_params.print_train_every
         self.print_model = "hnet_srl"
         self.model_to_save = {'mnet_srl': mnet}
         self.log_hist_every = 500
+
+        self.forward_model = forward_model
+        self.inverse_model = inverse_model
 
         self.loss_task = 0
         self.loss_reg = 0
@@ -38,8 +42,8 @@ class MonitorSRL(MonitorBase):
 
     def train_vision_step(self, loss_task, loss_robotic_priors, loss_slowness, loss_variability,
                           loss_proportionality, loss_repeatability, loss_causality, loss_forward_model,
-                          loss_inverse_model, loss_reg, dTheta, grad_tloss,
-                          weights, x_t):
+                          loss_inverse_model, loss_reg, dTheta, grad_tloss, mnet_weights, forward_model_parameters,
+                          inverse_model_parameters, x_t):
         self.loss_task_srl += loss_task.item()
         self.loss_reg_srl += loss_reg.item()
 
@@ -50,8 +54,8 @@ class MonitorSRL(MonitorBase):
         self.loss_repeatability += float(loss_repeatability)
         self.loss_causality += float(loss_causality)
 
-        self.loss_forward_model += loss_forward_model.item()
-        self.loss_inverse_model += loss_inverse_model.item()
+        self.loss_forward_model += float(loss_forward_model)
+        self.loss_inverse_model += float(loss_inverse_model)
 
         every_iter = self.srl_print_train_every
 
@@ -119,8 +123,19 @@ class MonitorSRL(MonitorBase):
             self.loss_inverse_model = 0
 
         if self.train_iter % self.log_hist_every == 0:
-            for i, weight in enumerate(weights):
-                self.writer.add_histogram(f'srl/weight/{i}', weight.flatten(), self.train_iter)
+            for i, (name, weight) in enumerate(zip(self.model.weight_names, list(mnet_weights))):
+                print(i, name)
+                self.writer.add_histogram(f'srl/weight/{i}_{name}', weight.flatten(), self.train_iter)
+            if forward_model_parameters:
+                for i, (name, weight) in enumerate(
+                        zip(self.forward_model.weight_names, list(forward_model_parameters))):
+                    print(i, name)
+                    self.writer.add_histogram(f'forward/weight/{i}_{name}', weight.flatten(), self.train_iter)
+            if inverse_model_parameters:
+                for i, (name, weight) in enumerate(
+                        zip(self.inverse_model.weight_names, list(inverse_model_parameters))):
+                    print(i, name)
+                    self.writer.add_histogram(f'inverse/weight/{i}_{name}', weight.flatten(), self.train_iter)
         self.train_iter += 1
 
     def validate(self, priors, forward_misc, inverse_misc):

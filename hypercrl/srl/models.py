@@ -7,23 +7,60 @@ from torch import nn
 from torchvision import transforms, models
 
 
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight, nn.init.calculate_gain('relu'))
+        m.bias.data.fill_(0.01)
+
+
+def flatten(list_of_lists):
+    if len(list_of_lists) == 0:
+        return list_of_lists
+    if isinstance(list_of_lists[0], list):
+        return flatten(list_of_lists[0]) + flatten(list_of_lists[1:])
+    return list_of_lists[:1] + flatten(list_of_lists[1:])
+
+
+def layer_to_name(layer):
+    if isinstance(layer, nn.ReLU):
+        return ["relu"]
+    if isinstance(layer, nn.Linear):
+        return ["linear"]
+    if isinstance(layer, nn.LeakyReLU):
+        return ["leaky_relu"]
+    if isinstance(layer, nn.Sequential):
+        return [layer_to_name(inner) for inner in layer]
+    return ["unknown"]
+
+
+def layer_names(net):
+    names = []
+    for c in net.children():
+        names += layer_to_name(c)
+    names = flatten(names)
+    names = [f'{i}_{name}' for i, name in enumerate(names)]
+    return names
+
+
 class MLP(torch.nn.Module):
     def __init__(self, in_dims, hidden_dims, out_dims):
         super(MLP, self).__init__()
+        act_fn = nn.ReLU
         self.in_layer = nn.Sequential(
             nn.Linear(in_dims, hidden_dims[0]),
-            nn.LeakyReLU()
+            act_fn()
         )
 
         self.layers = []
         for i in range(len(hidden_dims) - 1):
             self.layers.append(nn.Sequential(
-                nn.Linear(hidden_dims[i], hidden_dims[i + 1]), nn.LeakyReLU()
+                nn.Linear(hidden_dims[i], hidden_dims[i + 1]),
+                act_fn()
             ))
-
         self.layers = nn.Sequential(*self.layers)
+        self.out_layer = nn.Sequential(nn.Linear(hidden_dims[-1], out_dims))
 
-        self.out_layer = nn.Linear(hidden_dims[-1], out_dims)
+        self.apply(init_weights)
 
     def forward(self, x):
         x = self.in_layer(x)
@@ -32,8 +69,9 @@ class MLP(torch.nn.Module):
         return x
 
 
-class ResNet18Encoder:
+class ResNet18Encoder(torch.nn.Module):
     def __init__(self, mnet, vparams):
+        super().__init__()
         self.feature_extractor = models.resnet18(pretrained=True)
         # self.feature_extractor = models.vgg16(pretrained=True)
         self.feature_extractor.fc = torch.nn.Identity()
@@ -52,6 +90,7 @@ class ResNet18Encoder:
         ])
         self.out_layer = torch.sigmoid
         self.out_var = vparams.out_var
+        self.weight_names = mnet.weight_names
 
     def to(self, gpuid):
         self.feature_extractor.to(gpuid)
@@ -68,7 +107,7 @@ class ResNet18Encoder:
         x = x / 255.
         return self.transforms(x)
 
-    def parameters(self):
+    def parameters(self, recurse=True):
         return self.mnet.parameters()
 
     def forward(self, x, weights):

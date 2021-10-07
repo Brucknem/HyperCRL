@@ -1,23 +1,31 @@
+def hdims_to_hnet_arch(h_dims):
+    if h_dims == [32, 32]:
+        return [16, 16]
+    elif h_dims == [200, 200]:
+        return [50, 50]
+    elif h_dims == [256, 256]:
+        return [128, 128]
+    elif h_dims == [200, 200, 200, 200]:
+        return [256, 256]
+    elif h_dims == [200, 200, 200, 200, 200, 200, 200, 200]:
+        return [256, 256, 256, 256]
+    elif h_dims == [200, 200, 200]:
+        return [100, 100]
+    elif h_dims == [400, 400, 400]:
+        return [100, 100]
+    elif h_dims == [100, 100]:
+        return [40, 40]
+    raise ValueError(f"{h_dims} cannot be converted to hnet_arch")
+
+
 class Hparams():
+    def __init__(self):
+        self.vision_params = None
+
     @staticmethod
     def add_hnet_hparams(hparams, env):
         # Hypernetwork
-        if hparams.h_dims == [32, 32]:
-            hparams.hnet_arch = [16, 16]
-        elif hparams.h_dims == [200, 200]:
-            hparams.hnet_arch = [50, 50]
-        elif hparams.h_dims == [256, 256]:
-            hparams.hnet_arch = [128, 128]
-        elif hparams.h_dims == [200, 200, 200, 200]:
-            hparams.hnet_arch = [256, 256]
-        elif hparams.h_dims == [200, 200, 200, 200, 200, 200, 200, 200]:
-            hparams.hnet_arch = [256, 256, 256, 256]
-        elif hparams.h_dims == [200, 200, 200]:
-            hparams.hnet_arch = [100, 100]
-        elif hparams.h_dims == [400, 400, 400]:
-            hparams.hnet_arch = [100, 100]
-        elif hparams.h_dims == [100, 100]:
-            hparams.hnet_arch = [40, 40]
+        hparams.hnet_arch = hdims_to_hnet_arch(hparams.h_dims)
 
         if env == "door":
             hparams.hnet_act = "elu"
@@ -107,6 +115,53 @@ class Hparams():
 class VisionParams(Hparams):
     def __init__(self):
         pass
+
+    @staticmethod
+    def add_hnet_hparams(hparams, env):
+        # Hypernetwork
+        hparams.hnet_arch = hdims_to_hnet_arch(hparams.h_dims)
+
+        if env == "door":
+            hparams.hnet_act = "elu"
+        elif env == "door_pose":
+            hparams.hnet_act = "relu"
+        elif env == "pusher":
+            hparams.hnet_act = "elu"
+        else:
+            hparams.hnet_act = 'relu'
+
+        # Embedding
+        hparams.emb_size = 10
+        # Initialization
+        hparams.use_hyperfan_init = False
+        hparams.hnet_init = "xavier"  # or "normal"
+        hparams.std_normal_init = 0.02
+        hparams.std_normal_temb = 1  # std when initializing task embedding
+
+        # Training param
+        # MASTER_THESIS Check LR
+        # hparams.lr_hyper = 0.0001
+        hparams.grad_max_norm = 5
+
+        if env == "door_pose" or env == "pusher_slide":
+            hparams.beta = 0.5
+        else:
+            hparams.beta = 0.05
+
+        hparams.no_look_ahead = False  # False=use two step optimization
+        hparams.plastic_prev_tembs = False  # Allow adaptation of past task embeddings
+        hparams.backprop_dt = False  # Allow backpropagation through delta theta in the regularizer
+        hparams.use_sgd_change = False  # Approximate change with in delta theta with SGD
+        hparams.ewc_weight_importance = False  # Use fisher matrix to regularize
+        # model weights generated from hnet
+        hparams.n_fisher = -1  # Number of training samples to be used for the ' +
+        # 'estimation of the diagonal Fisher elements. If ' +
+        # "-1", all training samples are us
+
+        hparams.si_eps = 1e-3
+        hparams.mlp_var_minmax = True
+
+        return hparams
 
 
 def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False, vision=False):
@@ -911,7 +966,7 @@ def default_vision_params(hparams):
 
     hparams.vision_params.dont_train_srl = False
     hparams.vision_params.bs = 100
-    hparams.vision_params.lr_hyper = 0.01  # MASTER_THESIS 0.001
+    hparams.vision_params.lr_hyper = 0.001  # MASTER_THESIS 0.001
 
     hparams.vision_params.in_dim = 512
     hparams.vision_params.h_dims = [200] * 4
@@ -920,15 +975,17 @@ def default_vision_params(hparams):
     hparams.vision_params.dropout_rate = -1
 
     hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
-    hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
     hparams.vision_params.forward_model_lr = 0.001
+    hparams.vision_params.use_forward_model = True
+
     hparams.vision_params.inverse_model_dims = [200, 200, 200, 200]
     hparams.vision_params.inverse_model_lr = 0.001
+    hparams.vision_params.use_inverse_model = True
 
     hparams.vision_params.srl_update_every = 1000
     hparams.vision_params.train_vision_iters = 500000
     hparams.vision_params.print_train_every = 50
-    hparams.vision_params.sample_known_action_prob = 0.1
+    hparams.vision_params.sample_known_action_prob = 0.75
 
     hparams.vision_params.use_priors = True
     hparams.vision_params.use_fast_priors = False
@@ -936,8 +993,9 @@ def default_vision_params(hparams):
     hparams.vision_params.debug_visualization = True
 
     hparams.vision_params.save_path = "/mnt/local_data/datasets/master-thesis"
-    hparams.vision_params.save_every = -1
-    hparams.vision_params.load_max = 100
+    hparams.vision_params.save_every = 20
+    hparams.vision_params.load_max = 10000
+
     hparams.vision_params.load_suffix = "1631981744"
 
 

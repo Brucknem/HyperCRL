@@ -126,9 +126,9 @@ class MonitorBase():
         self.hparams = hparams
         self.collector = collector
         self.btest = btest
-        self.tflog_dir = os.path.join(hparams.save_folder, f'TB{hparams.env}_{hparams.model}_{hparams.seed}')
-        self.timestamp = int(time.time())
-        self.writer = SummaryWriter(log_dir=self.tflog_dir, filename_suffix=str(self.timestamp))
+        self.tflog_dir = os.path.join(hparams.save_folder,
+                                      f'TB{hparams.env}_{hparams.model}_{hparams.seed}_{int(time.time())}')
+        self.writer = SummaryWriter(log_dir=self.tflog_dir)
 
         self.val_stats = []
         self.print_model = self.hparams.model
@@ -139,7 +139,7 @@ class MonitorBase():
 
     def log_hparams(self):
         hp_dict = self.hparams.__dict__
-        with open(f'{self.tflog_dir}/hparams.{self.timestamp}.csv', 'w') as f:
+        with open(f'{self.tflog_dir}/hparams.csv', 'w') as f:
             fieldnames = ['config', 'value']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

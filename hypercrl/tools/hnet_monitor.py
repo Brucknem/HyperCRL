@@ -12,6 +12,9 @@ class MonitorHnet(MonitorRL):
         self.hnet = hnet
         self.model_to_save = {'mnet': mnet, 'hnet': hnet}
 
+        self.loss_task = 0
+        self.loss_reg = 0
+
     def train_step(self, loss_task, loss_reg, dTheta, grad_tloss, weights):
         self.loss_task += loss_task.item()
         self.loss_reg += loss_reg.item()
@@ -42,7 +45,7 @@ class MonitorHnet(MonitorRL):
             self.loss_task = 0
             self.loss_reg = 0
 
-        if (self.train_iter % self.log_hist_every == 0):
+        if self.train_iter % self.log_hist_every == 0:
             for i, weight in enumerate(weights):
                 self.writer.add_histogram(f'train/weight/{i}', weight.flatten(), self.train_iter)
         self.train_iter += 1

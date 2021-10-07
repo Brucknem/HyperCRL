@@ -46,7 +46,7 @@ def timeit_context(arr, name=""):
 def build_vision_model_hnet(hparams):
     vparams = hparams.vision_params
     encoder_mnet = MLP(n_in=vparams.in_dim,
-                       n_out=hparams.state_dim, hidden_layers=vparams.hdims,
+                       n_out=hparams.state_dim, hidden_layers=vparams.h_dims,
                        no_weights=True, out_var=vparams.out_var,
                        use_batch_norm=vparams.use_batch_norm,
                        dropout_rate=vparams.dropout_rate)
@@ -72,25 +72,36 @@ def reload_vision_model_hnet(hparams):
 
 def generate_srl_losses(hparams):
     priors = (SlownessPrior(), VariabilityPrior(), ProportionalityPrior(), RepeatabilityPrior(), CausalityPrior())
-
-    forward_model = hypercrl.srl.models.MLP(hparams.state_dim + hparams.control_dim,
-                                            hparams.vision_params.forward_model_dims,
-                                            hparams.state_dim)
-    inverse_model = hypercrl.srl.models.MLP(hparams.state_dim,
-                                            hparams.vision_params.forward_model_dims,
-                                            hparams.control_dim)
     gpuid = hparams.gpuid
-    forward_model.to(gpuid)
-    inverse_model.to(gpuid)
-    forward_model.train()
-    inverse_model.train()
 
-    inverse_misc = (
-        inverse_model, torch.optim.Adam(inverse_model.parameters(), lr=hparams.vision_params.inverse_model_lr),
-        torch.nn.MSELoss())
-    forward_misc = (
-        forward_model, torch.optim.Adam(forward_model.parameters(), lr=hparams.vision_params.forward_model_lr),
-        torch.nn.MSELoss())
+    if hparams.vision_params.use_forward_model:
+        forward_model = MLP(hparams.state_dim + hparams.control_dim,
+                            hparams.state_dim,
+                            # hparams.vision_params.forward_model_dims,
+                            [hparams.state_dim] * 4,
+                            use_batch_norm=True,
+                            )
+        forward_model.to(gpuid)
+        forward_model.train()
+        forward_misc = (
+            forward_model, torch.optim.Adam(forward_model.parameters(), lr=hparams.vision_params.forward_model_lr),
+            torch.nn.MSELoss())
+    else:
+        forward_misc = (None,) * 3
+    if hparams.vision_params.use_inverse_model:
+        inverse_model = MLP(hparams.state_dim,
+                            hparams.control_dim,
+                            # hparams.vision_params.inverse_model_dims,
+                            [hparams.state_dim] * 4,
+                            use_batch_norm=True,
+                            )
+        inverse_model.to(gpuid)
+        inverse_model.train()
+        inverse_misc = (
+            inverse_model, torch.optim.Adam(inverse_model.parameters(), lr=hparams.vision_params.inverse_model_lr),
+            torch.nn.MSELoss())
+    else:
+        inverse_misc = (None,) * 3
 
     return priors, forward_misc, inverse_misc
 
@@ -185,6 +196,9 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
     # Whether the regularizer will be computed during training?
     calc_reg = task_id > 0 and hparams.beta > 0
 
+    train_forward_model = hparams.vision_params.use_forward_model
+    train_inverse_model = hparams.vision_params.use_inverse_model
+
     total_time_iter = []
     total_time_hnet = []
     total_time_hnet_optimize = []
@@ -200,12 +214,12 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
     while it < hparams.vision_params.train_vision_iters:
         mnet.to(gpuid)
         hnet and hnet.to(gpuid)
-        forward_model.to(gpuid)
-        inverse_model.to(gpuid)
+        train_forward_model and forward_model.to(gpuid)
+        train_inverse_model and inverse_model.to(gpuid)
         mnet.train()
         hnet and hnet.train()
-        forward_model.train()
-        inverse_model.train()
+        train_forward_model and forward_model.train()
+        train_inverse_model and inverse_model.train()
 
         for i, data in enumerate(train_loader):
             regularized_params = list(mnet.parameters()) if not hnet else regularized_params
@@ -234,18 +248,24 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
             x_t = mnet.forward(x_t, mnet_weights)
             x_tt = mnet.forward(x_tt, mnet_weights)
 
-            # Forward model loss
-            with timeit_context(total_time_forward):
-                forward_model_optimizer.zero_grad()
-                x_a_t = torch.hstack((x_t, a_t))
-                predicted_x_tt = forward_model(x_a_t)
-                loss_forward_model = forward_model_loss_fn(x_tt, predicted_x_tt)
+            if train_forward_model:
+                # Forward model loss
+                with timeit_context(total_time_forward):
+                    forward_model_optimizer.zero_grad()
+                    x_a_t = torch.hstack((x_t, a_t))
+                    predicted_x_tt = forward_model(x_a_t)
+                    loss_forward_model = forward_model_loss_fn(x_tt, predicted_x_tt)
+            else:
+                loss_forward_model = 0
 
-            # Inverse model loss
-            with timeit_context(total_time_inverse):
-                inverse_model_optimizer.zero_grad()
-                predicted_actions = inverse_model(x_t)
-                loss_inverse_model = inverse_model_loss_fn(a_t, predicted_actions)
+            if train_inverse_model:
+                # Inverse model loss
+                with timeit_context(total_time_inverse):
+                    inverse_model_optimizer.zero_grad()
+                    predicted_actions = inverse_model(x_t)
+                    loss_inverse_model = inverse_model_loss_fn(a_t, predicted_actions)
+            else:
+                loss_inverse_model = 0
 
             # Robotic Priors loss
             with timeit_context(total_time_priors):
@@ -259,8 +279,8 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
                 loss_task = loss_priors + loss_forward_model + loss_inverse_model
                 loss_task.backward(retain_graph=True,
                                    create_graph=hnet is not None and hparams.vision_params.backprop_dt and calc_reg)
-                loss_forward_model.backward(retain_graph=True)
-                loss_inverse_model.backward(retain_graph=True)
+                # train_forward_model and loss_forward_model.backward(retain_graph=True)
+                # train_inverse_model and loss_inverse_model.backward(retain_graph=True)
                 hnet and torch.nn.utils.clip_grad_norm_(hnet.get_task_emb(task_id), hparams.grad_max_norm)
 
                 # The task embedding is only trained on the task-specific loss.
@@ -324,20 +344,23 @@ def train(task_id, mnet, hnet, trainer_misc, logger, srl_collector, hparams, tra
                 torch.nn.utils.clip_grad_norm_(regularized_params, hparams.vision_params.grad_max_norm)
                 theta_optimizer.step()
 
-            with timeit_context(total_time_forward_optimize):
-                # Train forward model
-                forward_model_optimizer.step()
+            if train_forward_model:
+                with timeit_context(total_time_forward_optimize):
+                    # Train forward model
+                    forward_model_optimizer.step()
 
-            with timeit_context(total_time_inverse_optimize):
-                # Train inverse model
-                inverse_model_optimizer.step()
+            if train_inverse_model:
+                with timeit_context(total_time_inverse_optimize):
+                    # Train inverse model
+                    inverse_model_optimizer.step()
 
             total_time_iter.append(time.time() - iter_time)
 
-            mnet_weights = regularized_params
+            mnet_weights = mnet.parameters()
             logger.train_vision_step(loss_task, loss_priors, loss_slowness, loss_variability, loss_proportionality,
                                      loss_repeatability, loss_causality, loss_forward_model, loss_inverse_model,
-                                     loss_reg, dTheta, grad_tloss, mnet_weights, x_t)
+                                     loss_reg, dTheta, grad_tloss, mnet_weights, forward_model.parameters(),
+                                     inverse_model.parameters(), x_t)
             # Validate
             # logger.validate(priors, forward_misc, inverse_misc)
 

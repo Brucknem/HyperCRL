@@ -154,7 +154,7 @@ def build_model_hnet(hparams, num_input=2):
     print('Constructed MLP with shapes: ', mnet.param_shapes)
     param_shapes = mnet.param_shapes
 
-    hnet = generate_hnet(hparams, param_shapes)
+    hnet = generate_hnet(mnet, param_shapes, hparams.hnet_arch, emb_size=hparams.emb_size, hnet_act=hparams.hnet_act)
     calculate_compression_ratio(hnet, hparams, mnet.param_shapes)
     initialize_hnet(hnet, hparams)
 
