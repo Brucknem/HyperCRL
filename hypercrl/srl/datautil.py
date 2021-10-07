@@ -13,7 +13,7 @@ from hypercrl.srl import ResNet18EncoderHnet
 import pathlib
 import pandas as pd
 
-from hypercrl.srl.utils import sample_by_inverse_size
+from hypercrl.srl.utils import sample_by_size, remove_and_move, probabilities_by_size
 
 
 class DataCollector:
@@ -39,14 +39,15 @@ class DataCollector:
         self.env_name = hparams.env
 
         self.image_dims = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
+        self.cv_image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3)
 
         self.max_capacity = hparams.vision_params.collector_max_capacity
 
         self.save_path = hparams.vision_params.save_path
-        self.save_path = pathlib.Path(self.save_path).joinpath(str(int(time.time())))
         self.save_every = hparams.vision_params.save_every
 
         self.load_max = hparams.vision_params.load_max
+        self.save_suffix = hparams.vision_params.save_suffix
         self.load_suffix = hparams.vision_params.load_suffix
 
     def num_tasks(self):
@@ -58,6 +59,9 @@ class DataCollector:
             u = u.detach().cpu().numpy()
         if u.ndim == 1:
             u = u[:, None]
+
+        x_t = x_t.reshape(self.image_dims[1:])
+        x_tt = x_tt.reshape(self.image_dims[1:])
 
         if task_id in self.images:
             self.images[task_id].append(x_t)
@@ -91,8 +95,6 @@ class DataCollector:
             self.same_actions[task_id][action] = []
         self.same_actions[task_id][action].append(ind)
 
-        self.save()
-
         self.delete_on_max_capacity(task_id)
 
     def delete_on_max_capacity(self, task_id):
@@ -100,26 +102,20 @@ class DataCollector:
             return
 
         while len(self.images[task_id]) > self.max_capacity:
-            remove_from = self.train_inds[task_id] if len(self.train_inds[task_id]) > 3 * len(
+            remove_from = self.train_inds[task_id] if len(self.train_inds[task_id]) > 2 * len(
                 self.val_inds[task_id]) else self.val_inds[task_id]
 
-            idx = sample_by_inverse_size(np.array(self.rewards[task_id])[remove_from])
+            idx = sample_by_size(np.array(self.rewards[task_id])[remove_from], lower_as_median=True)
             idx = remove_from[idx]
 
-            if idx in self.train_inds[task_id]:
-                self.train_inds[task_id].remove(idx)
-            else:
-                self.val_inds[task_id].remove(idx)
-
-            self.train_inds[task_id] = list(map(lambda x: x if x < idx else x - 1, self.train_inds[task_id]))
-            self.val_inds[task_id] = list(map(lambda x: x if x < idx else x - 1, self.val_inds[task_id]))
+            self.train_inds[task_id] = remove_and_move(self.train_inds[task_id], idx)
+            self.val_inds[task_id] = remove_and_move(self.val_inds[task_id], idx)
 
             to_del = []
-            for key, value in self.same_actions[task_id].items():
-                idx in value and value.remove(idx)
-                if len(value) == 0:
+            for key in self.same_actions[task_id].keys():
+                self.same_actions[task_id][key] = remove_and_move(self.same_actions[task_id][key], idx)
+                if len(self.same_actions[task_id][key]) == 0:
                     to_del.append(key)
-                self.same_actions[task_id][key] = list(map(lambda x: x if x < idx else x - 1, value))
 
             for key in to_del:
                 del self.same_actions[task_id][key]
@@ -236,14 +232,7 @@ class DataCollector:
         least_same_action_indices = {key: len(value) for (key, value) in self.same_actions[task_id].items()}
         probs = np.array(list(least_same_action_indices.values()))
 
-        if len(probs) == 1:
-            return self.actions[task_id][0]
-
-        probs = probs ** 2
-        probs = probs / sum(probs)
-        probs = 1 - probs
-        probs = probs / sum(probs)
-        idx = np.random.choice(len(least_same_action_indices), p=probs)
+        idx = sample_by_size(probs, inverse=True, lower_as_median=True)
         action = list(least_same_action_indices.keys())[idx]
         # print(f'Sampled action: {idx} -> {action}')
         return np.array(action)
@@ -252,14 +241,10 @@ class DataCollector:
         return len(self.images) == 0 or len(self.images[task_id]) == 0
 
     def save(self):
-        if self.save_every < 0:
-            return
-
         for task_id in self.images.keys():
-            if len(self.images[task_id]) < self.save_every:
+            if self.empty(task_id):
                 continue
-
-            save_path = pathlib.Path(self.save_path).joinpath(str(task_id))
+            save_path = pathlib.Path(self.save_path).joinpath(str(self.save_suffix)).joinpath(str(task_id))
             image_path = save_path.joinpath("images")
             nexts_path = save_path.joinpath("nexts")
 
@@ -295,30 +280,26 @@ class DataCollector:
 
             for i in range(len(self.images[task_id])):
                 cv2.imwrite(str(image_path.joinpath(f"img_{i + last_saved_index}.png")),
-                            self.images[task_id][i].reshape(
-                                (self.image_dims[2], self.image_dims[3], self.image_dims[1])))
+                            self.images[task_id][i].reshape(self.cv_image_dims))
                 cv2.imwrite(str(nexts_path.joinpath(f"next_{i + last_saved_index}.png")),
-                            self.nexts[task_id][i].reshape(
-                                (self.image_dims[2], self.image_dims[3], self.image_dims[1])))
+                            self.nexts[task_id][i].reshape(self.cv_image_dims))
 
-            self.images[task_id] = []
-            self.nexts[task_id] = []
-            self.actions[task_id] = []
-            self.rewards[task_id] = []
-            self.train_inds[task_id] = []
-            self.val_inds[task_id] = []
+            self.clear(task_id)
             self.same_actions[task_id] = {key: [None] * len(val) for key, val in self.same_actions[task_id].items()}
+
+    def clear(self, task_id):
+        self.images[task_id] = []
+        self.nexts[task_id] = []
+        self.actions[task_id] = []
+        self.rewards[task_id] = []
+        self.train_inds[task_id] = []
+        self.val_inds[task_id] = []
 
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
         for task_id in [x.name for x in load_path_base.iterdir() if x.is_dir()]:
             task_id = int(task_id)
-            self.images[task_id] = []
-            self.nexts[task_id] = []
-            self.actions[task_id] = []
-            self.rewards[task_id] = []
-            self.train_inds[task_id] = []
-            self.val_inds[task_id] = []
+            self.clear(task_id)
 
             load_path = load_path_base.joinpath(str(task_id))
             image_path = load_path.joinpath("images")
@@ -328,15 +309,15 @@ class DataCollector:
             actions = list(np.expand_dims(actions, axis=2))
 
             rewards = list(pd.read_csv(str(load_path.joinpath("rewards.csv"))).to_numpy().squeeze())
-            indices = [True if np.random.random() < 0.75 else False for _ in
-                       range(len(rewards))]  # pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze()
+            indices = list(pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze())
             train_inds = list(np.where(indices)[0])
 
-            p = rewards
-            p = p - min(p)
-            p = p / sum(p)
-            p = None
-            indices_to_keep = [i for i in np.random.choice(range(len(rewards)), size=self.load_max, replace=False, p=p)]
+            if self.load_max <= 0:
+                indices_to_keep = list(range(len(rewards)))
+            else:
+                p = probabilities_by_size(rewards, lower_as_median=False)
+                indices_to_keep = [i for i in
+                                   np.random.choice(range(len(rewards)), size=self.load_max, replace=False, p=p)]
 
             tmp_train_inds = []
             tmp_val_inds = []
@@ -346,9 +327,9 @@ class DataCollector:
                 if running_index % 100 == 0:
                     print(f'Loaded {running_index} / {len(indices_to_keep)}')
                 img_path = image_path.joinpath(f'img_{ind}.png')
-                x_t = cv2.imread(str(img_path)).reshape(self.image_dims[1:]).flatten()
+                x_t = cv2.imread(str(img_path))
                 next_path = nexts_path.joinpath(f'next_{ind}.png')
-                x_tt = cv2.imread(str(next_path)).reshape(self.image_dims[1:]).flatten()
+                x_tt = cv2.imread(str(next_path))
                 u = actions[ind]
                 r = rewards[ind]
 
@@ -361,3 +342,55 @@ class DataCollector:
 
             self.train_inds[task_id] = tmp_train_inds
             self.val_inds[task_id] = tmp_val_inds
+
+    def __eq__(self, other):
+        if not isinstance(other, DataCollector):
+            return False
+
+        for a, b, in zip(self.images.keys(), other.images.keys()):
+            if a != b:
+                return False
+
+        for task_id in self.images.keys():
+            for pair in [
+                zip(self.images[task_id], other.images[task_id]),
+                zip(self.actions[task_id], other.actions[task_id]),
+                zip(self.nexts[task_id], other.nexts[task_id]),
+                zip(self.rewards[task_id], other.rewards[task_id]),
+                zip(self.train_inds[task_id], other.train_inds[task_id]),
+                zip(self.val_inds[task_id], other.val_inds[task_id]),
+            ]:
+                for a, b in pair:
+                    if not np.allclose(a, b):
+                        return False
+
+            if not self.check_same_actions_really_same(task_id):
+                return False
+            if not other.check_same_actions_really_same(task_id):
+                return False
+
+            if len(self.same_actions[task_id]) != len(other.same_actions[task_id]):
+                return False
+
+            for action in self.same_actions[task_id]:
+                index = -1
+                for i, other_action in enumerate(other.same_actions[task_id].keys()):
+                    if np.allclose(action, other_action):
+                        index = i
+                        break
+                if index < 0:
+                    return False
+
+                for a, b in zip(self.same_actions[task_id][action], other.same_actions[task_id][other_action]):
+                    if not np.allclose(a, b):
+                        return False
+
+        return True
+
+    def check_same_actions_really_same(self, task_id):
+        for key, value in self.same_actions[task_id].items():
+            for idx in value:
+                for a, b in zip(list(key), list(self.actions[task_id][idx])):
+                    if not np.allclose(a, b):
+                        return False
+        return True

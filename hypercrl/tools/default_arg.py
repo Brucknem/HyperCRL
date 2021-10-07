@@ -1,3 +1,6 @@
+import time
+
+
 def hdims_to_hnet_arch(h_dims):
     if h_dims == [32, 32]:
         return [16, 16]
@@ -997,6 +1000,7 @@ def default_vision_params(hparams):
     hparams.vision_params.load_max = 10000
 
     hparams.vision_params.load_suffix = "1631981744"
+    hparams.vision_params.save_suffix = int(time.time())
 
 
 def default_arg_door_pose(hparams):
