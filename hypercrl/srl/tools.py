@@ -435,6 +435,8 @@ def calculate_priors(priors, gpuid, hparams, idx, mnet, mnet_weights, srl_collec
         loss_causality = 0
         for i, data in enumerate(priors_loader):
             states, next_states, other_states, next_other_states, rewards, other_rewards = data
+            if len(other_states) < 2:
+                continue
             other_states = mnet.forward(other_states.to(gpuid), mnet_weights)
             next_other_states = mnet.forward(next_other_states.to(gpuid), mnet_weights)
             loss_proportionality += proportionality_prior(states, next_states, other_states, next_other_states)

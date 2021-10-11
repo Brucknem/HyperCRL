@@ -14,3 +14,4 @@ save_dir/
 
 srl_logs**
 srl/
+tests/tmp

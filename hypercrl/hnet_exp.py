@@ -1,3 +1,5 @@
+import sys
+
 import cv2
 import numpy as np
 import random
@@ -406,7 +408,7 @@ def play_model(hparams, runs=10):
         env.close()
 
 
-def get_image_obs(obs: np.ndarray, hparams):
+def get_image_obs(obs: np.ndarray, hparams, reward=0):
     ts = time.time()
     w, h = hparams.vision_params.camera_widths, hparams.vision_params.camera_heights
     flattened_image_dims = w * h * 3
@@ -414,8 +416,15 @@ def get_image_obs(obs: np.ndarray, hparams):
     # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
     # img = img / 255.
     img = img.astype(np.uint8)
+
     if hparams.vision_params.debug_visualization:
-        cv2.imshow("Obs", cv2.flip(np.reshape(img, (w, h, 3)), 0))
+        show_img = cv2.flip(np.reshape(img, (w, h, 3)), 0)
+        cv2.imshow("Obs", show_img)
+
+        reward_img = np.zeros((100, 1000, 3), dtype=np.uint8)
+        cv2.addText(reward_img, f'{reward:.3f}', (5, 30), "Times", color=(255, 255, 255), pointSize=24)
+        cv2.imshow("Reward", reward_img)
+
         cv2.waitKey(1)
     # print(f'Get image obs time: {ts - time.time()} s')
     return img
@@ -610,6 +619,10 @@ def collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vi
         if it % 100 == 0:
             print(f"Random Step: {it} / {hparams.init_rand_steps}")
 
+        if hparams.vision_params.save_every > 0 and it % hparams.vision_params.save_every == 0:
+            print(f'Saving...')
+            srl_collector.save()
+
         if not srl_collector.empty(task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
             u = srl_collector.sample_action(task_id)
         else:
@@ -617,7 +630,7 @@ def collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vi
         x_tt, reward, done, _ = env.step(u.reshape(env.action_space.shape))
 
         if is_vision_based:
-            x_tt = get_image_obs(x_tt, hparams)
+            x_tt = get_image_obs(x_tt, hparams, reward)
             srl_collector.add(x_t, u, x_tt, reward, task_id)
         else:
             collector.add(x_t, u, x_tt, task_id)
@@ -627,6 +640,13 @@ def collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vi
         if done:
             x_t = env.reset()
             x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
+
+    if hparams.vision_params.save_every > 0:
+        print(f'Saving...')
+        srl_collector.save()
+        if hparams.vision_params.exit_after_save:
+            print('Finished collecting data.')
+            sys.exit(0)
 
 
 def chunked_hnet(env, seed=None, savepath=None, play=False):
@@ -649,7 +669,7 @@ def hnet(env, robot="Panda", seed=None, savepath=None, resume=False, render=Fals
 
     hparams = Hparams.add_hnet_hparams(hparams, env)
     hparams.vision_params = VisionParams.add_hnet_hparams(hparams.vision_params, env)
-    
+
     if play:
         play_model(hparams, runs)
     else:

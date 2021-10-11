@@ -8,7 +8,7 @@ from torchvision import transforms
 from hypercrl.srl.srl_dataset import SRLDataSet
 
 
-class TestSRLDataset(unittest.TestCase):
+class _TestSRLDataset(unittest.TestCase):
 
     def setUp(self) -> None:
         self.dataset: SRLDataSet = SRLDataSet(transform=None)

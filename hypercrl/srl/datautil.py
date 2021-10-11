@@ -374,6 +374,7 @@ class DataCollector:
 
             for action in self.same_actions[task_id]:
                 index = -1
+                other_action = None
                 for i, other_action in enumerate(other.same_actions[task_id].keys()):
                     if np.allclose(action, other_action):
                         index = i

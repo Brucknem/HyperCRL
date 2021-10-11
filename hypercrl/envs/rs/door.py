@@ -292,7 +292,7 @@ class PandaDoor(RobotEnv):
         if self.reward_shaping:
             reward_dist = -np.linalg.norm(self._get_dist_vec())
             reward_log_dist = -np.log(np.square(np.linalg.norm(reward_dist)) + 5e-3) - 5.0
-            reward_ori = - np.linalg.norm(self._get_ori_diff_no_xaxis()) if self.pose_control else 0
+            reward_ori = -np.linalg.norm(self._get_ori_diff_no_xaxis()) if self.pose_control else 0
             reward_door = abs(self._get_door_hinge_pos(sin=False)) * 50
 
             if self.handle_type == "lever" or self.handle_type == "round":

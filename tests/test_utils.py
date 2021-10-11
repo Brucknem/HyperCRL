@@ -5,7 +5,7 @@ from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and
 from tests.test_base import TestBase
 
 
-class TestDataUtil(TestBase):
+class TestUtil(TestBase):
     """
     Unittests for the utils
     """
