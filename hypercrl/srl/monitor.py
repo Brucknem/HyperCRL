@@ -1,32 +1,33 @@
 import os
+from pathlib import Path
 
+import numpy as np
 import torch
 import torchvision
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torchviz import make_dot
 
 from hypercrl.srl import layer_names
-from hypercrl.srl.tools import calculate_priors
+from hypercrl.srl.tools import calculate_priors, calculate_forward_model, calculate_inverse_model
+from hypercrl.srl.utils import calc_mean
 from hypercrl.tools import MonitorBase
 
 
 class MonitorSRL(MonitorBase):
-    def __init__(self, hparams, mnet, forward_model, inverse_model, collector, btest):
-        super(MonitorSRL, self).__init__(hparams, mnet, collector, btest)
+    def __init__(self, hparams, networks, collector, btest):
+        super(MonitorSRL, self).__init__(hparams, networks["encoder"]["model"], collector, btest)
         self.eval_every = hparams.vision_params.eval_every
         self.print_train_every = hparams.vision_params.print_train_every
         self.print_model = "hnet_srl"
-        self.model_to_save = {'mnet_srl': mnet}
+        self.model_to_save = {'mnet_srl': networks["encoder"]["model"]}
         self.log_hist_every = 500
 
-        self.forward_model = forward_model
-        self.inverse_model = inverse_model
+        self.forward_model = networks["forward"]["model"] if "forward" in networks else None
+        self.inverse_model = networks["inverse"]["model"] if "inverse" in networks else None
 
         self.loss_task = 0
         self.loss_reg = 0
-
-        self.loss_task_srl = 0
-        self.loss_reg_srl = 0
 
         self.loss_robotic_priors = 0
         self.loss_slowness = 0
@@ -39,13 +40,72 @@ class MonitorSRL(MonitorBase):
         self.loss_inverse_model = 0
 
         self.srl_print_train_every = hparams.vision_params.print_train_every
+        # for model_misc in networks.values():
+        #     self.writer.add_graph(model_misc["model"])
+        self.save_model(self.tflog_dir, hparams, networks, collector)
+
+    def save_model(self, save_folder, hparams, networks, collector):
+        train_set, _ = collector.get_dataset(0)
+
+        i, x_t, a_t, x_tt, r = [x.to(hparams.gpuid) for x in train_set[0]]
+        x_t = networks["encoder"]["model"].forward(x_t, None)
+        x_tt = networks["encoder"]["model"].forward(x_tt, None)
+
+        save_path = Path(save_folder)
+        make_dot(x_t, params=(dict(list(networks["encoder"]["model"].named_parameters())))).render(
+            save_path / "encoder", format="png")
+
+        if hparams.vision_params.use_forward_model:
+            x_a_t = torch.hstack((x_t, a_t))
+            x_a_t = torch.zeros_like(x_a_t, device=hparams.gpuid)
+            val = networks["forward"]["model"].forward(x_a_t, None)
+            make_dot(val, params=(dict(list(networks["forward"]["model"].named_parameters())))).render(
+                save_path / "forward", format="png")
+
+        if hparams.vision_params.use_inverse_model:
+            x_ttt = torch.hstack((x_t, x_tt))
+            x_ttt = torch.vstack([x_ttt] * 3)
+            x_ttt = torch.zeros_like(x_ttt, device=hparams.gpuid)
+            val = networks["inverse"]["model"].forward(x_ttt, None)
+            make_dot(val, params=(dict(list(networks["inverse"]["model"].named_parameters())))).render(
+                save_path / "inverse", format="png")
+
+    def log_losses(self, i, loss_tot, loss_task, loss_reg_srl, loss_robotic_priors, loss_slowness,
+                   loss_variability, loss_proportionality, loss_repeatability, loss_causality,
+                   loss_forward_model, loss_inverse_model, train=True):
+        prefix = "train" if train else "eval"
+
+        print(f"[Vision - {prefix}] Batch: {i}, Loss: {loss_tot:.5f}, " +
+              f"Task L: {loss_task:.5f}, Reg L: {loss_reg_srl:.5f}, " +
+              f"Prior L: {loss_robotic_priors:.5f}, " +
+              f"Slow L: {loss_slowness:.5f}, Vari L: {loss_variability:.5f}, " +
+              f"Prop L: {loss_proportionality:.5f}, Rept L: {loss_repeatability:.5f}, " +
+              f"Caus L: {loss_causality:.5f}, " +
+              f"Forward L: {loss_forward_model:.5f}, Inverse L: {loss_inverse_model:.5f}")
+
+        self.writer.add_scalar(f'{prefix}_srl/full_loss', loss_tot, i)
+        self.writer.add_scalar(f'{prefix}_srl/task_loss', loss_task, i)
+        self.writer.add_scalar(f'{prefix}_srl/regularizer', loss_reg_srl, i)
+
+        if self.hparams.vision_params.use_priors:
+            self.writer.add_scalar(f'{prefix}_srl/robotic_priors', loss_robotic_priors, i)
+            self.writer.add_scalar(f'{prefix}_priors/_total', loss_robotic_priors, i)
+            self.writer.add_scalar(f'{prefix}_priors/slowness_prior', loss_slowness, i)
+            self.writer.add_scalar(f'{prefix}_priors/variability_prior', loss_variability, i)
+            self.writer.add_scalar(f'{prefix}_priors/proportionality_prior', loss_proportionality, i)
+            self.writer.add_scalar(f'{prefix}_priors/repeatability_prior', loss_repeatability, i)
+            self.writer.add_scalar(f'{prefix}_priors/causality_prior', loss_causality, i)
+
+        if self.hparams.vision_params.use_forward_model:
+            self.writer.add_scalar(f'{prefix}_srl/loss_forward_model', loss_forward_model, i)
+        if self.hparams.vision_params.use_inverse_model:
+            self.writer.add_scalar(f'{prefix}_srl/loss_inverse_model', loss_inverse_model, i)
 
     def train_vision_step(self, loss_task, loss_robotic_priors, loss_slowness, loss_variability,
                           loss_proportionality, loss_repeatability, loss_causality, loss_forward_model,
-                          loss_inverse_model, loss_reg, dTheta, grad_tloss, mnet_weights, forward_model_parameters,
-                          inverse_model_parameters, x_t):
-        self.loss_task_srl += loss_task.item()
-        self.loss_reg_srl += loss_reg.item()
+                          loss_inverse_model, networks):
+        self.loss_task += loss_task.item()
+        # self.loss_reg_srl += loss_reg.item()
 
         self.loss_robotic_priors += float(loss_robotic_priors)
         self.loss_slowness += float(loss_slowness)
@@ -60,9 +120,9 @@ class MonitorSRL(MonitorBase):
         every_iter = self.srl_print_train_every
 
         if self.train_iter > 0 and self.train_iter % every_iter == 0:
-            self.loss_task_srl /= every_iter
-            self.loss_reg_srl /= every_iter
-            loss_tot = self.loss_reg_srl + self.loss_task_srl
+            self.loss_task /= every_iter
+            self.loss_reg /= every_iter
+            loss_tot = self.loss_reg + self.loss_task
 
             self.loss_robotic_priors /= every_iter
             self.loss_slowness /= every_iter
@@ -74,44 +134,13 @@ class MonitorSRL(MonitorBase):
             self.loss_forward_model /= every_iter
             self.loss_inverse_model /= every_iter
 
-            print(f"[Vision] Batch: {self.train_iter}, Loss: {loss_tot:.5f}, " +
-                  f"Task L: {self.loss_task_srl:.5f}, Reg L: {self.loss_reg_srl:.5f}, " +
-                  f"Prior L: {self.loss_robotic_priors:.5f}, " +
-                  f"Slow L: {self.loss_slowness:.5f}, Vari L: {self.loss_variability:.5f}, " +
-                  f"Prop L: {self.loss_proportionality:.5f}, Rept L: {self.loss_repeatability:.5f}, " +
-                  f"Caus L: {self.loss_causality:.5f}, " +
-                  f"Forward L: {self.loss_forward_model:.5f}, Inverse L: {self.loss_inverse_model:.5f}")
+            self.log_losses(self.train_iter, loss_tot, self.loss_task, self.loss_reg, self.loss_robotic_priors,
+                            self.loss_slowness,
+                            self.loss_variability, self.loss_proportionality, self.loss_repeatability,
+                            self.loss_causality, self.loss_forward_model, self.loss_inverse_model, train=True)
 
-            i = self.train_iter
-
-            self.writer.add_scalar('srl/full_loss', loss_tot, i)
-            self.writer.add_scalar('srl/regularizer', self.loss_reg_srl, i)
-
-            self.writer.add_scalar('srl/robotic_priors', self.loss_robotic_priors, i)
-            self.writer.add_scalar('priors/_total', self.loss_robotic_priors, i)
-            self.writer.add_scalar('priors/slowness_prior', self.loss_slowness, i)
-            self.writer.add_scalar('priors/variability_prior', self.loss_variability, i)
-            self.writer.add_scalar('priors/proportionality_prior', self.loss_proportionality, i)
-            self.writer.add_scalar('priors/repeatability_prior', self.loss_repeatability, i)
-            self.writer.add_scalar('priors/causality_prior', self.loss_causality, i)
-
-            self.writer.add_scalar('srl/loss_forward_model', self.loss_forward_model, i)
-            self.writer.add_scalar('srl/loss_inverse_model', self.loss_inverse_model, i)
-
-            if dTheta is not None:
-                dT_norm = torch.norm(torch.cat([d.view(-1) for d in dTheta]), 2)
-                self.writer.add_scalar('srl/dTheta_norm', dT_norm, i)
-            if grad_tloss is not None:
-                (grad_tloss, grad_full, grad_diff_norm, grad_cos) = grad_tloss
-                self.writer.add_scalar('srl/full_grad_norm',
-                                       torch.norm(grad_full, 2), i)
-                self.writer.add_scalar('srl/reg_grad_norm',
-                                       grad_diff_norm, i)
-                self.writer.add_scalar('srl/cosine_task_reg',
-                                       grad_cos, i)
-
-            self.loss_task_srl = 0
-            self.loss_reg_srl = 0
+            self.loss_task = 0
+            self.loss_reg = 0
 
             self.loss_robotic_priors = 0
             self.loss_slowness = 0
@@ -123,26 +152,18 @@ class MonitorSRL(MonitorBase):
             self.loss_inverse_model = 0
 
         if self.train_iter % self.log_hist_every == 0:
-            for i, (name, weight) in enumerate(zip(self.model.weight_names, list(mnet_weights))):
-                print(i, name)
-                self.writer.add_histogram(f'srl/weight/{i}_{name}', weight.flatten(), self.train_iter)
-            if forward_model_parameters:
+            for model_name, model_misc in networks.items():
                 for i, (name, weight) in enumerate(
-                        zip(self.forward_model.weight_names, list(forward_model_parameters))):
-                    print(i, name)
-                    self.writer.add_histogram(f'forward/weight/{i}_{name}', weight.flatten(), self.train_iter)
-            if inverse_model_parameters:
-                for i, (name, weight) in enumerate(
-                        zip(self.inverse_model.weight_names, list(inverse_model_parameters))):
-                    print(i, name)
-                    self.writer.add_histogram(f'inverse/weight/{i}_{name}', weight.flatten(), self.train_iter)
+                        zip(model_misc["model"].weight_names, list(model_misc["model"].parameters()))):
+                    # print(i, name)
+                    self.writer.add_histogram(f'{model_name}/weight/{i}_{name}', weight.flatten(), self.train_iter)
         self.train_iter += 1
 
-    def validate(self, priors, forward_misc, inverse_misc):
+    def validate(self, networks, srl_collector):
         if (self.train_iter % self.eval_every) == 0:
-            self.model.eval()
+            for misc in networks.values():
+                misc["model"].eval()
 
-            bs = self.hparams.bs
             num_tasks = self.collector.num_tasks()
 
             for i in range(num_tasks):
@@ -152,76 +173,109 @@ class MonitorSRL(MonitorBase):
                     continue
                 if len(self.val_stats) <= i:
                     self.val_stats.append({"time": [],
-                                           "nll": [], "diff": []})
-                _, val_sets = self.collector.get_dataset(i)
-                loader = DataLoader(val_sets, batch_size=bs,
-                                    num_workers=self.hparams.num_ds_worker)
+                                           "loss": [],
+                                           "priors": [],
+                                           "forward": [],
+                                           "inverse": []})
 
                 # Determine if we are validating the currently training task
-                val_nll, val_diff = self.validate_task(i, loader, priors, forward_misc, inverse_misc, is_training)
+                loss, priors, forward, inverse = self.validate_task(i, networks, srl_collector, is_training)
 
                 self.val_stats[i]['time'].append(self.train_iter)
-                self.val_stats[i]['nll'].append(val_nll.item())
-                self.val_stats[i]['diff'].append(val_diff.mean().item())
+                self.val_stats[i]['loss'].append(float(loss))
+                self.val_stats[i]['priors'].append(float(priors))
+                self.val_stats[i]['forward'].append(float(forward))
+                self.val_stats[i]['inverse'].append(float(inverse))
 
-            self.model.train()
+            for misc in networks.values():
+                misc["model"].train()
             # Other Sfuff
             # self.btest.plot()
 
-    def validate_task(self, task_id, loader, priors, forward_misc, inverse_misc, is_training=False):
+    def validate_task(self, task_id, networks, srl_collector, is_training=False):
         gpuid = self.hparams.gpuid
 
-        # Initialize Stats
-        val_loss = 0
-        val_diff = 0
-        states = []
+        losses_forward_model = 0
+        losses_inverse_model = 0
+        losses_priors, losses_slowness, losses_variability, losses_proportionality, losses_repeatability, losses_causality = 0, 0, 0, 0, 0, 0
+        losses = 0
+        states = 0
+        actions_diff = []
+        actions_normalized_diff = []
 
-        N = len(loader)
+        bs = self.hparams.bs
 
-        forward_model, forward_model_optimizer, forward_model_loss_fn = forward_misc
-        inverse_model, inverse_model_optimizer, inverse_model_loss_fn = inverse_misc
+        _, val_sets = srl_collector.get_dataset(task_id)
+        loader = DataLoader(val_sets, batch_size=bs, num_workers=self.hparams.num_ds_worker, drop_last=True)
+
+        num_batches = len(loader)
 
         with torch.no_grad():
             for _, data in enumerate(loader):
-                idx, x_t, a_t, x_tt, r = [x.to(gpuid) for x in data]
+                idx, x_t, a_t, x_tt, rewards = [x.to(gpuid) for x in data]
 
-                if is_training:
-                    # Inference in weight space
-                    x_t = self.model.forward(x_t, None)
-                    x_tt = self.model.forward(x_tt, None)
-                else:
-                    raise NotImplementedError("Idk")
-                    # Inference in function space
-                    # output = self.model(x_t, a_t, task_id=task_id)
+                x_t = networks["encoder"]["model"].forward(x_t, None)
+                x_tt = networks["encoder"]["model"].forward(x_tt, None)
 
-                x_a_t = torch.hstack((x_t, a_t))
-                predicted_x_tt = forward_model(x_a_t)
-                loss_forward_model = forward_model_loss_fn(x_tt, predicted_x_tt)
+                loss_forward_model, _ = calculate_forward_model(networks, x_t, a_t, x_tt)
+                losses_forward_model += loss_forward_model
 
-                predicted_actions = inverse_model(x_t)
-                loss_inverse_model = inverse_model_loss_fn(a_t, predicted_actions)
+                loss_inverse_model, predicted_actions, predicted_actions_normalized = \
+                    calculate_inverse_model(networks, x_t, a_t, x_tt)
+                losses_inverse_model += loss_inverse_model
 
-                loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality = calculate_priors(
-                    priors, gpuid, self.hparams, idx, self.model, None, self.collector, task_id, x_t, x_tt, r)
+                loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality \
+                    = calculate_priors(networks, gpuid, self.hparams, idx, srl_collector, task_id, x_t, x_tt, rewards)
 
-                diff = torch.abs(x_tt - x_t).mean(0)
+                losses_priors += loss_priors
+                losses_slowness += loss_slowness
+                losses_variability += loss_variability
+                losses_proportionality += loss_proportionality
+                losses_repeatability += loss_repeatability
+                losses_causality += loss_causality
 
                 loss = loss_priors + loss_forward_model + loss_inverse_model
+                losses += loss
 
-                val_loss += loss
-                val_diff += diff
-                states += [x_t.mean(0)]
+                states += (x_t.mean(0))
 
-            val_loss = val_loss / N
-            val_diff = val_diff / N
-            states = torch.cat(states).mean(0)
+        states = states / num_batches
+        self.writer.add_histogram(f'eval_states/{task_id}', states, self.train_iter)
 
-        self.writer.add_histogram(f'srl_states/{task_id}', states, self.train_iter)
+        # actions = torch.cat(actions)
+        # actions_normalized = torch.cat(actions_normalized)
+        # actions_mean = torch.mean(actions, 0)
+        # actions_std = torch.std(actions, 0)
+        # actions_normalized_mean = torch.mean(actions_normalized, 0)
+        # actions_normalized_std = torch.std(actions_normalized, 0)
+        #
+        # for i in range(len(actions_mean)):
+        #     self.writer.add_scalar(f'actions/{task_id}/{i}/mean', actions_mean[i], self.train_iter)
+        #     self.writer.add_scalar(f'actions/{task_id}/{i}/std', actions_std[i], self.train_iter)
+        #     self.writer.add_scalar(f'actions_normalized/{task_id}/{i}/mean', actions_normalized_mean[i],
+        #                            self.train_iter)
+        #     self.writer.add_scalar(f'actions_normalized/{task_id}/{i}/std', actions_normalized_std[i], self.train_iter)
 
-        print(f"Iter {self.train_iter}, Task: {task_id}, " + \
-              f"Val Loss: {val_loss.item():.5f}, Val Diff: {val_diff.mean().item()}")
+        losses /= num_batches
+        losses_priors /= num_batches
+        losses_forward_model /= num_batches
+        losses_inverse_model /= num_batches
 
-        return val_loss, val_diff
+        self.log_losses(self.train_iter,
+                        losses,
+                        losses,
+                        0,
+                        losses_priors,
+                        losses_slowness / num_batches,
+                        losses_variability / num_batches,
+                        losses_proportionality / num_batches,
+                        losses_repeatability / num_batches,
+                        losses_causality / num_batches,
+                        losses_forward_model,
+                        losses_inverse_model,
+                        train=False)
+
+        return losses, losses_priors, losses_forward_model, losses_inverse_model
 
 
 class MonitorSRLHnet(MonitorSRL):

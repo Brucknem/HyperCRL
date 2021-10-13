@@ -91,6 +91,7 @@ class ResNet18Encoder(torch.nn.Module):
         self.out_layer = torch.sigmoid
         self.out_var = vparams.out_var
         self.weight_names = mnet.weight_names
+        self.add_sin_cos_to_state = vparams.add_sin_cos_to_state
 
     def to(self, gpuid):
         self.feature_extractor.to(gpuid)
@@ -108,7 +109,13 @@ class ResNet18Encoder(torch.nn.Module):
         return self.transforms(x)
 
     def parameters(self, recurse=True):
-        return self.mnet.parameters()
+        return self.mnet.parameters(recurse=recurse)
+
+    def named_parameters(self, prefix="", recurse=True):
+        return self.mnet.named_parameters(prefix=prefix, recurse=recurse)
+
+    def stack_sin_cos(self, x):
+        return torch.hstack([x, torch.sin(x), torch.cos(x)])
 
     def forward(self, x, weights):
         ts = time.time()
@@ -118,6 +125,8 @@ class ResNet18Encoder(torch.nn.Module):
         x = self.transform(x)
         x = self.feature_extractor(x)
         x = self.mnet.forward(x)
+        if self.add_sin_cos_to_state:
+            x = self.stack_sin_cos(x)
         # x = self.out_layer(x)
         # print(f'Encoding Time: {ts - time.time()} s')
         return x
@@ -136,6 +145,8 @@ class ResNet18EncoderHnet(ResNet18Encoder):
         x = self.transform(x)
         x = self.feature_extractor(x)
         x = self.mnet.forward(x, weights)
-        # x = self.out_layer(x)
+        if self.add_sin_cos_to_state:
+            x = self.stack_sin_cos(x)
+            # x = self.out_layer(x)
         # print(f'Encoding Time: {ts - time.time()} s')
         return x

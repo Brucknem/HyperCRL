@@ -52,11 +52,12 @@ class Agent():
 
 
 class RandomAgent(Agent):
-    def __init__(self, hparams):
+    def __init__(self, hparams, action_spec):
         super(RandomAgent, self).__init__(hparams)
+        self.action_spec = action_spec
 
     def act(self, state, task_id=None):
-        return np.random.randn(self.control_dim, 1)
+        return np.random.uniform(low=self.action_spec[0], high=self.action_spec[1], size=self.control_dim)
 
 
 class MPC(Agent):

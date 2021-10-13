@@ -127,7 +127,7 @@ class MonitorBase():
         self.collector = collector
         self.btest = btest
         self.tflog_dir = os.path.join(hparams.save_folder,
-                                      f'TB{hparams.env}_{hparams.model}_{hparams.seed}_{int(time.time())}')
+                                      f'TB{hparams.env}_{hparams.model}_{hparams.seed}_{time.time()}')
         self.writer = SummaryWriter(log_dir=self.tflog_dir)
 
         self.val_stats = []
@@ -151,7 +151,10 @@ class MonitorBase():
                     val = str(val)
                 if isinstance(val, VisionParams):
                     for key, val in val.__dict__.items():
-                        writer.writerow({'config': 'vision_params.' + key, 'value': val})
+                        full_key = 'vision_params.' + key
+                        writer.writerow({'config': full_key, 'value': val})
+                        if isinstance(val, list):
+                            val = str(val)
                     continue
                 writer.writerow({'config': key, 'value': val})
 

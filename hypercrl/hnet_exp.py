@@ -34,7 +34,6 @@ from hypercrl.hypercl.utils import optim_step as opstep
 from hypercrl.srl.datautil import DataCollector as SRLDataCollector
 from hypercrl.srl.tools import build_vision_model_hnet as build_vision_model
 from hypercrl.srl.tools import reload_vision_model_hnet as reload_vision_model
-from hypercrl.srl.tools import augment_model as augment_vision_model
 from hypercrl.srl.tools import train as train_vision
 
 
@@ -496,9 +495,6 @@ def run(hparams, render=False):
     is_vision_based and encoder_mnet.to(hparams.gpuid)
     is_vision_based and encoder_hnet.to(hparams.gpuid)
 
-    # Random Policy
-    rand_pi = RandomAgent(hparams)
-
     # Start learning in environment
     envs = CLEnvHandler(hparams.env, hparams.robot, hparams.seed, image_dims=image_dims)
     if hparams.resume:
@@ -508,6 +504,9 @@ def run(hparams, render=False):
     for task_id in range(num_tasks_seen, hparams.num_tasks):
         # New Task with different friction
         env = envs.add_task(task_id, render=render)
+
+        # Random Policy
+        rand_pi = RandomAgent(hparams, env.action_spec)
 
         collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vision_based, srl_collector)
 

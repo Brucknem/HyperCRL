@@ -18,12 +18,14 @@ def hdims_to_hnet_arch(h_dims):
         return [100, 100]
     elif h_dims == [100, 100]:
         return [40, 40]
+    elif h_dims == [512, 512, 512, 512]:
+        return [100, 100]
+    elif h_dims == [256] * 8:
+        return [100, 100, 100, 100]
     raise ValueError(f"{h_dims} cannot be converted to hnet_arch")
 
 
 class Hparams():
-    def __init__(self):
-        self.vision_params = None
 
     @staticmethod
     def add_hnet_hparams(hparams, env):
@@ -953,44 +955,51 @@ def default_arg_door(hparams):
 
 
 def default_vision_params(hparams):
-    hparams.state_dim = 512
+    latent_dim = 512
+    hparams.state_dim = latent_dim
     hparams.out_dim = hparams.state_dim
     hparams.dnn_out = "state"
     # hparams.normalize_xu = False
 
-    hparams.vision_params.eval_every = 1000
+    hparams.vision_params.eval_every = 500
 
     hparams.vision_params.model = "hnet"
     hparams.vision_params.grad_max_norm = 5
 
     hparams.vision_params.camera_widths = 224
     hparams.vision_params.camera_heights = 224
-    hparams.vision_params.collector_max_capacity = 10000
+    hparams.vision_params.collector_max_capacity = 100000
 
     hparams.vision_params.dont_train_srl = False
     hparams.vision_params.bs = 100
     hparams.vision_params.lr_hyper = 0.001  # MASTER_THESIS 0.001
 
-    hparams.vision_params.in_dim = 512
-    hparams.vision_params.h_dims = [200] * 4
+    hparams.vision_params.in_dim = latent_dim
+    hparams.vision_params.h_dims = [hparams.state_dim] * 4
     hparams.vision_params.out_var = False
     hparams.vision_params.use_batch_norm = False
     hparams.vision_params.dropout_rate = -1
+    add_sin_cos_to_state = True
+    hparams.vision_params.add_sin_cos_to_state = add_sin_cos_to_state
 
-    hparams.vision_params.forward_model_dims = [200, 200, 200, 200]
+    if add_sin_cos_to_state:
+        hparams.vision_params.forward_model_dims = [hparams.state_dim * 3] * 4
+    else:
+        hparams.vision_params.forward_model_dims = [hparams.state_dim] * 4
+
     hparams.vision_params.forward_model_lr = 0.001
-    hparams.vision_params.use_forward_model = True
+    hparams.vision_params.use_forward_model = False
 
-    hparams.vision_params.inverse_model_dims = [200, 200, 200, 200]
+    hparams.vision_params.inverse_model_dims = [hparams.state_dim] * 4
     hparams.vision_params.inverse_model_lr = 0.001
     hparams.vision_params.use_inverse_model = True
 
     hparams.vision_params.srl_update_every = 1000
-    hparams.vision_params.train_vision_iters = 500000
+    hparams.vision_params.train_vision_iters = 10000
     hparams.vision_params.print_train_every = 50
     hparams.vision_params.sample_known_action_prob = 0.75
 
-    hparams.vision_params.use_priors = True
+    hparams.vision_params.use_priors = False
     hparams.vision_params.use_fast_priors = False
 
     hparams.vision_params.debug_visualization = True
@@ -1000,7 +1009,9 @@ def default_vision_params(hparams):
     hparams.vision_params.exit_after_save = True
     hparams.vision_params.load_max = -1
 
-    hparams.vision_params.load_suffix = "1633616927"
+    # hparams.vision_params.load_suffix = "1k"  # MASTER_THESIS Length: 1000
+    hparams.vision_params.load_suffix = "10k"  # MASTER_THESIS Length: 1000
+
     hparams.vision_params.save_suffix = int(time.time())
 
 

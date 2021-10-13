@@ -1,7 +1,8 @@
 import unittest
 import numpy as np
+import torch
 
-from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and_move
+from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and_move, scale_to_action_space
 from tests.test_base import TestBase
 
 
@@ -63,6 +64,33 @@ class TestUtil(TestBase):
 
         arr = remove_and_move(arr, 10)
         self.assertListEqual(arr, list(range(0, 10, 2)) + list(range(10, 18, 2)))
+
+    def test_scale_to_action_space(self):
+        for num_elem in range(1, 100):
+            original_min = np.random.randint(-100, 0)
+            original_max = np.random.randint(1, 100)
+            scaled_min = np.random.randint(-20, 0)
+            scaled_max = np.random.randint(1, 20)
+
+            arr = torch.tensor(np.linspace(original_min, original_max, num_elem))
+            func = scale_to_action_space(([scaled_min] * num_elem, [scaled_max] * num_elem))
+
+            actual = func(arr)
+            self.assertGreaterEqual(min(actual), scaled_min)
+            self.assertLessEqual(max(actual), scaled_max)
+
+        for num_elem in range(1, 100):
+            original_min = np.random.randint(-100, 0)
+            original_max = np.random.randint(1, 100)
+            scaled_min = np.random.randint(-20, 0)
+            scaled_max = np.random.randint(1, 20)
+
+            arr = torch.tensor(np.linspace(original_min, original_max, num_elem))
+            func = scale_to_action_space(([scaled_min] * num_elem, [scaled_max] * num_elem), activation="tanh")
+
+            actual = func(arr)
+            self.assertGreaterEqual(min(actual), scaled_min)
+            self.assertLessEqual(max(actual), scaled_max)
 
 
 if __name__ == '__main__':

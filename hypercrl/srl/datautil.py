@@ -343,6 +343,8 @@ class DataCollector:
             self.train_inds[task_id] = tmp_train_inds
             self.val_inds[task_id] = tmp_val_inds
 
+            assert self.check_same_actions_really_same(task_id)
+
     def __eq__(self, other):
         if not isinstance(other, DataCollector):
             return False
