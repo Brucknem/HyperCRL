@@ -1,8 +1,10 @@
+import math
 import unittest
 import numpy as np
 import torch
 
-from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and_move, scale_to_action_space
+from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and_move, scale_to_action_space, \
+    stack_sin_cos
 from tests.test_base import TestBase
 
 
@@ -91,6 +93,12 @@ class TestUtil(TestBase):
             actual = func(arr)
             self.assertGreaterEqual(min(actual), scaled_min)
             self.assertLessEqual(max(actual), scaled_max)
+
+    def test_stack_sin_cos(self):
+        x = torch.tensor(np.linspace(start=0, stop=2, num=211)) * math.pi
+        actual = stack_sin_cos(x)
+        expected = torch.tensor(list(x.numpy()) + [math.sin(i) for i in x] + [math.cos(i) for i in x])
+        self.assertListAlmostEqual(actual, expected)
 
 
 if __name__ == '__main__':

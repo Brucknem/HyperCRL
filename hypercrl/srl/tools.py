@@ -229,12 +229,12 @@ def train(task_id, networks, optimizer, logger, srl_collector, hparams, train_it
                     loss_task.backward()
                     optimizer.step()
 
-                # Validate
-                logger.validate(networks, srl_collector)
-
                 logger.train_vision_step(loss_task, loss_priors, loss_slowness, loss_variability, loss_proportionality,
                                          loss_repeatability, loss_causality, loss_forward_model, loss_inverse_model,
                                          networks)
+
+                # Validate
+                logger.validate(networks, srl_collector)
 
                 it += 1
                 if it > hparams.vision_params.train_vision_iters:
@@ -298,34 +298,19 @@ def calculate_priors(networks, gpuid, hparams, idx, srl_collector, task_id, x_t,
             return loss_priors, loss_slowness, loss_variability, 0, 0, 0
 
         with timeit_context([]):  # , "Calculate slow priors"):
-            states = torch.cat(states)
-            next_states = torch.cat(next_states)
-            other_states = torch.cat(other_states)
-            next_other_states = torch.cat(next_other_states)
-            rewards = torch.cat(rewards)
-            other_rewards = torch.cat(other_rewards)
-            priors_loader = torch.utils.data.DataLoader(
-                TensorDataset(states, next_states, other_states, next_other_states, rewards, other_rewards),
-                batch_size=hparams.bs,
-                shuffle=True, drop_last=True, num_workers=hparams.num_ds_worker)
-            loss_proportionality = 0
-            loss_repeatability = 0
-            loss_causality = 0
-            for i, data in enumerate(priors_loader):
-                states, next_states, other_states, next_other_states, rewards, other_rewards = data
-                if len(other_states) < 2:
-                    continue
-                other_states = networks["encoder"]["model"].forward(other_states.to(gpuid), None)
-                next_other_states = networks["encoder"]["model"].forward(next_other_states.to(gpuid), None)
-                loss_proportionality += proportionality_prior(states, next_states, other_states, next_other_states)
-                loss_repeatability += repeatability_prior(states, next_states, other_states, next_other_states)
-                loss_causality += causality_prior(states, next_states, rewards.to(gpuid), other_rewards.to(gpuid))
+            sample_indices = np.random.choice(len(states), size=len(x_t))
+            states, next_states, other_states, next_other_states, rewards, other_rewards = \
+                [torch.cat(x)[sample_indices].to(gpuid) for x in
+                 [states, next_states, other_states, next_other_states, rewards, other_rewards]]
 
-            # MASTER_THESIS Divide by N for mean of same actions
+            other_states = networks["encoder"]["model"].forward(other_states, None)
+            next_other_states = networks["encoder"]["model"].forward(next_other_states, None)
 
-            # scale = 10
-            # loss_repeatability *= scale
-            # loss_proportionality *= scale
+            loss_proportionality = proportionality_prior(states, next_states, other_states, next_other_states)
+            loss_repeatability = repeatability_prior(states, next_states, other_states, next_other_states)
+            loss_causality = causality_prior(states, next_states, rewards, other_rewards)
+            # loss_causality = 0
+
             loss_priors += loss_proportionality
             loss_priors += loss_repeatability
             loss_priors += loss_causality

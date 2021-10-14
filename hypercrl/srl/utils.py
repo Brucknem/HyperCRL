@@ -2,6 +2,19 @@ import numpy as np
 import torch
 
 
+def stack_sin_cos(x):
+    """
+    Stacks the input with its sinus and cosines values
+    Args:
+        x: The input vector
+
+    Returns:
+        [x, sin(x), cos(x)]
+
+    """
+    return torch.hstack([x, torch.sin(x), torch.cos(x)])
+
+
 def scale_to_action_space(action_space, gpuid='cpu', activation='sigmoid'):
     """
     Generates a function that applies a tanh activation to some data and scale the result to the action space

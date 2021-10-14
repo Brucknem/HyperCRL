@@ -6,6 +6,8 @@ import torchvision
 from torch import nn
 from torchvision import transforms, models
 
+from hypercrl.srl.utils import stack_sin_cos
+
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
@@ -114,9 +116,6 @@ class ResNet18Encoder(torch.nn.Module):
     def named_parameters(self, prefix="", recurse=True):
         return self.mnet.named_parameters(prefix=prefix, recurse=recurse)
 
-    def stack_sin_cos(self, x):
-        return torch.hstack([x, torch.sin(x), torch.cos(x)])
-
     def forward(self, x, weights):
         ts = time.time()
         if len(x.shape) == 1:
@@ -126,7 +125,7 @@ class ResNet18Encoder(torch.nn.Module):
         x = self.feature_extractor(x)
         x = self.mnet.forward(x)
         if self.add_sin_cos_to_state:
-            x = self.stack_sin_cos(x)
+            x = stack_sin_cos(x)
         # x = self.out_layer(x)
         # print(f'Encoding Time: {ts - time.time()} s')
         return x
@@ -146,7 +145,7 @@ class ResNet18EncoderHnet(ResNet18Encoder):
         x = self.feature_extractor(x)
         x = self.mnet.forward(x, weights)
         if self.add_sin_cos_to_state:
-            x = self.stack_sin_cos(x)
+            x = stack_sin_cos(x)
             # x = self.out_layer(x)
         # print(f'Encoding Time: {ts - time.time()} s')
         return x

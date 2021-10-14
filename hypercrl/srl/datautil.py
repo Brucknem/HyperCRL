@@ -172,13 +172,15 @@ class DataCollector:
         nexts = np.array([])
         rewards = np.array([])
 
-        if indices:
+        if idx in indices:
             indices.remove(int(idx))
-            if indices:
-                indices = np.array(indices)
-                images = np.array([self.images[task_id][i] for i in indices]).reshape(self.image_dims)
-                nexts = np.array([self.nexts[task_id][i] for i in indices]).reshape(self.image_dims)
-                rewards = np.array([self.rewards[task_id][i] for i in indices]).T
+
+        if indices:
+            indices = np.array(indices)
+            # indices = [np.random.choice(indices)]
+            images = np.array([self.images[task_id][i] for i in indices]).reshape(self.image_dims)
+            nexts = np.array([self.nexts[task_id][i] for i in indices]).reshape(self.image_dims)
+            rewards = np.array([self.rewards[task_id][i] for i in indices]).T
 
         return images, nexts, rewards
 
