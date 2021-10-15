@@ -4,7 +4,8 @@ import numpy as np
 import torch
 
 from hypercrl.srl.utils import sample_by_size, probabilities_by_size, remove_and_move, scale_to_action_space, \
-    stack_sin_cos
+    stack_sin_cos, get_image_obs
+from hypercrl.tools import Hparams
 from tests.test_base import TestBase
 
 
@@ -99,6 +100,25 @@ class TestUtil(TestBase):
         actual = stack_sin_cos(x)
         expected = torch.tensor(list(x.numpy()) + [math.sin(i) for i in x] + [math.cos(i) for i in x])
         self.assertListAlmostEqual(actual, expected)
+
+    def test_extract_observations(self):
+        hparams = Hparams()
+        x_t = np.random.rand(26)
+        actual_x_t, actual_img = get_image_obs(x_t, hparams)
+        self.assertTrue(np.array_equal(x_t, actual_x_t))
+        self.assertIsNone(actual_img)
+
+        hparams.vision_params = Hparams()
+        hparams.vision_params.camera_widths, hparams.vision_params.camera_heights = 32, 32
+        hparams.vision_params.debug_visualization = False
+
+        img = (np.random.rand(32, 32, 3) * 255).astype(np.uint8).flatten()
+
+        obs = np.hstack([x_t.flatten(), img.flatten()])
+
+        actual_x_t, actual_img = get_image_obs(obs, hparams)
+        self.assertTrue(np.array_equal(x_t, actual_x_t))
+        self.assertTrue(np.array_equal(img, actual_img))
 
 
 if __name__ == '__main__':

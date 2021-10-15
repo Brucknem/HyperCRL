@@ -1,5 +1,41 @@
+import cv2
 import numpy as np
 import torch
+
+
+def convert_to_array(x):
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu().numpy()
+    if x.ndim == 1:
+        x = x[:, None]
+    return x
+
+
+def get_image_obs(obs: np.ndarray, hparams, reward=0, feature_extractor=None):
+    if not hasattr(hparams, "vision_params"):
+        return obs, None
+
+    w, h = hparams.vision_params.camera_widths, hparams.vision_params.camera_heights
+    flattened_image_dims = w * h * 3
+    img = obs[-flattened_image_dims:]
+    # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
+    # img = img / 255.
+    img = img.astype(np.uint8)
+    img = np.reshape(img, (w, h, 3))
+    features = feature_extractor(img)
+
+    if hparams.vision_params.debug_visualization:
+        show_img = cv2.flip(img, 0)
+        cv2.imshow("Obs", show_img)
+
+        reward_img = np.zeros((100, 1000, 3), dtype=np.uint8)
+        cv2.addText(reward_img, f'{reward:.3f}', (5, 30), "Times", color=(255, 255, 255), pointSize=24)
+        cv2.imshow("Reward", reward_img)
+
+        cv2.waitKey(1)
+    # print(f'Get image obs time: {ts - time.time()} s')
+
+    return obs[:-flattened_image_dims], features
 
 
 def stack_sin_cos(x):

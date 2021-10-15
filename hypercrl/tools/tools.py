@@ -21,7 +21,6 @@ from hypercrl import dataset
 
 from hypercrl import dataset
 from hypercrl.envs.cl_env import CLEnvHandler, EnvSpecs
-from hypercrl.tools.default_arg import VisionParams
 
 
 def reset_seed(seed):
@@ -138,24 +137,13 @@ class MonitorBase():
         self.log_hparams()
 
     def log_hparams(self):
-        hp_dict = self.hparams.__dict__
+        hp_dict = self.hparams.to_dict()
         with open(f'{self.tflog_dir}/hparams.csv', 'w') as f:
             fieldnames = ['config', 'value']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
 
             for key, val in hp_dict.items():
-                if val is None:
-                    val = "None"
-                if isinstance(val, list):
-                    val = str(val)
-                if isinstance(val, VisionParams):
-                    for key, val in val.__dict__.items():
-                        full_key = 'vision_params.' + key
-                        writer.writerow({'config': full_key, 'value': val})
-                        if isinstance(val, list):
-                            val = str(val)
-                    continue
                 writer.writerow({'config': key, 'value': val})
 
     def set_optimizer(self, optimizer):

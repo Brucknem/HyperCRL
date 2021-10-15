@@ -13,7 +13,7 @@ from hypercrl.srl import ResNet18EncoderHnet
 import pathlib
 import pandas as pd
 
-from hypercrl.srl.utils import sample_by_size, remove_and_move, probabilities_by_size
+from hypercrl.srl.utils import sample_by_size, remove_and_move, probabilities_by_size, convert_to_array
 
 
 class DataCollector:
@@ -24,10 +24,12 @@ class DataCollector:
     def __init__(self, hparams):
         self.images = {}
         self.actions = {}
-
         # MASTER_THESIS Remove nexts for better RAM usage
         self.nexts = {}
         self.rewards = {}
+
+        self.gt_nexts = {}
+        self.gt_state = {}
 
         self.train_inds = {}
         self.val_inds = {}
@@ -53,12 +55,11 @@ class DataCollector:
     def num_tasks(self):
         return len(self.images)
 
-    def add(self, x_t, u, x_tt, r, task_id):
+    def add(self, task_id, x_t, u, x_tt, r, gt_x_t=None, gt_x_tt=None):
         # Convert Format
-        if isinstance(u, torch.Tensor):
-            u = u.detach().cpu().numpy()
-        if u.ndim == 1:
-            u = u[:, None]
+        u = convert_to_array(u)
+        gt_x_t = convert_to_array(gt_x_t)
+        gt_x_tt = convert_to_array(gt_x_tt)
 
         x_t = x_t.reshape(self.image_dims[1:])
         x_tt = x_tt.reshape(self.image_dims[1:])
@@ -68,25 +69,29 @@ class DataCollector:
             self.actions[task_id].append(u)
             self.nexts[task_id].append(x_tt)
             self.rewards[task_id].append(r)
+            self.gt_state[task_id].append(gt_x_t)
+            self.gt_nexts[task_id].append(gt_x_tt)
         else:
             self.images[task_id] = [x_t]
             self.actions[task_id] = [u]
             self.nexts[task_id] = [x_tt]
             self.rewards[task_id] = [r]
+            self.gt_state[task_id] = [gt_x_t]
+            self.gt_nexts[task_id] = [gt_x_tt]
+
+        if task_id not in self.train_inds:
+            self.train_inds[task_id] = []
+            self.val_inds[task_id] = []
+
         # Train or val
-        is_train = (np.random.random() <= 0.75)
+        # is_train = len(self.train_inds[task_id]) < 3 * len(self.val_inds[task_id])
+        is_train = np.random.rand() < 0.75
 
         ind = len(self.images[task_id]) - 1
         if is_train:
-            if task_id in self.train_inds:
-                self.train_inds[task_id].append(ind)
-            else:
-                self.train_inds[task_id] = [ind]
+            self.train_inds[task_id].append(ind)
         else:
-            if task_id in self.val_inds:
-                self.val_inds[task_id].append(ind)
-            else:
-                self.val_inds[task_id] = [ind]
+            self.val_inds[task_id].append(ind)
 
         if task_id not in self.same_actions:
             self.same_actions[task_id] = {}
@@ -124,6 +129,8 @@ class DataCollector:
             del self.actions[task_id][idx]
             del self.nexts[task_id][idx]
             del self.rewards[task_id][idx]
+            del self.gt_state[task_id][idx]
+            del self.gt_nexts[task_id][idx]
 
         # print(len(self.states[task_id]))
 
@@ -135,9 +142,11 @@ class DataCollector:
 
         indices = torch.IntTensor(list(range(len(self.images[task_id]))))
         images = torch.FloatTensor(np.hstack(self.images[task_id])).reshape(self.image_dims)
-        actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
         nexts = torch.FloatTensor(np.hstack(self.nexts[task_id])).reshape(self.image_dims)
+        actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
         rewards = torch.FloatTensor(np.hstack(self.rewards[task_id])).T
+        gt_x_t = torch.FloatTensor(np.hstack(self.gt_state[task_id])).T
+        gt_x_tt = torch.FloatTensor(np.hstack(self.gt_nexts[task_id])).T
 
         train_inds = self.train_inds[task_id]
         val_inds = self.val_inds[task_id]
@@ -145,9 +154,9 @@ class DataCollector:
         if ds_range == "second_half":
             train_inds = train_inds[len(train_inds) // 2:]
         train_set = TensorDataset(indices[train_inds], images[train_inds], actions[train_inds], nexts[train_inds],
-                                  rewards[train_inds])
+                                  rewards[train_inds], gt_x_t[train_inds], gt_x_tt[train_inds])
         val_set = TensorDataset(indices[val_inds], images[val_inds], actions[val_inds], nexts[val_inds],
-                                rewards[val_inds])
+                                rewards[val_inds], gt_x_t[val_inds], gt_x_tt[val_inds])
 
         return train_set, val_set
 
@@ -256,9 +265,13 @@ class DataCollector:
             actions_path = save_path.joinpath("actions.csv")
             rewards_path = save_path.joinpath("rewards.csv")
             indices_path = save_path.joinpath("indices.csv")
+            gt_states_path = save_path.joinpath("gt_states.csv")
+            gt_nexts_path = save_path.joinpath("gt_nexts.csv")
 
             actions = pd.DataFrame(np.array(self.actions[task_id]).squeeze())
             rewards = pd.DataFrame(np.array(self.rewards[task_id]).squeeze())
+            gt_states = pd.DataFrame(np.array(self.gt_state[task_id]).squeeze())
+            gt_nexts = pd.DataFrame(np.array(self.gt_nexts[task_id]).squeeze())
             indices = pd.DataFrame(
                 [1 if i in self.train_inds[task_id] else 0 for i in range(len(self.images[task_id]))])
             last_saved_index = 0
@@ -266,19 +279,28 @@ class DataCollector:
                 old_actions = pd.read_csv(actions_path, index_col=False)
                 old_rewards = pd.read_csv(rewards_path, index_col=False)
                 old_indices = pd.read_csv(indices_path, index_col=False)
+                old_gt_states = pd.read_csv(gt_states_path, index_col=False)
+                old_gt_nexts = pd.read_csv(gt_nexts_path, index_col=False)
+
                 last_saved_index = len(old_actions)
 
                 old_actions.columns = actions.columns
                 old_rewards.columns = rewards.columns
                 old_indices.columns = indices.columns
+                old_gt_states.columns = gt_states.columns
+                old_gt_nexts.columns = gt_nexts.columns
 
                 actions = old_actions.append(actions)
                 rewards = old_rewards.append(rewards)
                 indices = old_indices.append(indices)
+                gt_states = old_gt_states.append(gt_states)
+                gt_nexts = old_gt_nexts.append(gt_nexts)
 
             actions.to_csv(actions_path, index=False)
             rewards.to_csv(rewards_path, index=False)
             indices.to_csv(indices_path, index=False)
+            gt_states.to_csv(gt_states_path, index=False)
+            gt_nexts.to_csv(gt_nexts_path, index=False)
 
             for i in range(len(self.images[task_id])):
                 cv2.imwrite(str(image_path.joinpath(f"img_{i + last_saved_index}.png")),
@@ -296,6 +318,8 @@ class DataCollector:
         self.rewards[task_id] = []
         self.train_inds[task_id] = []
         self.val_inds[task_id] = []
+        self.gt_state[task_id] = []
+        self.gt_nexts[task_id] = []
 
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
@@ -309,6 +333,10 @@ class DataCollector:
 
             actions = pd.read_csv(str(load_path.joinpath("actions.csv"))).to_numpy()
             actions = list(np.expand_dims(actions, axis=2))
+            gt_states = pd.read_csv(str(load_path.joinpath("gt_states.csv"))).to_numpy()
+            gt_states = list(np.expand_dims(gt_states, axis=2))
+            gt_nexts = pd.read_csv(str(load_path.joinpath("gt_nexts.csv"))).to_numpy()
+            gt_nexts = list(np.expand_dims(gt_nexts, axis=2))
 
             rewards = list(pd.read_csv(str(load_path.joinpath("rewards.csv"))).to_numpy().squeeze())
             indices = list(pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze())
@@ -334,8 +362,10 @@ class DataCollector:
                 x_tt = cv2.imread(str(next_path))
                 u = actions[ind]
                 r = rewards[ind]
+                gt_x_t = gt_states[ind]
+                gt_x_tt = gt_nexts[ind]
 
-                self.add(x_t, u, x_tt, r, task_id)
+                self.add(task_id, x_t, u, x_tt, r, gt_x_t, gt_x_tt)
 
                 if ind in train_inds:
                     tmp_train_inds.append(running_index)

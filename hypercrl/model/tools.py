@@ -15,7 +15,6 @@ from hypercrl.control import MPC
 from hypercrl.hypercl import HyperNetwork, MLP, ChunkedHyperNetworkHandler, MainNetInterface, ResNet
 from hypercrl.hypercl.utils import ewc_regularizer as ewc
 from hypercrl.hypercl.utils import si_regularizer as si
-from ..tools.default_arg import VisionParams
 
 
 def get_recon_loss(decoder_out, X, dist, reduction='sum', weight=1):
@@ -181,7 +180,7 @@ def generate_hnet(model, param_shapes, hnet_arch, emb_size, hnet_act, chunk_dim=
 
 
 def calculate_compression_ratio(hnet, hparams, param_shapes):
-    if isinstance(hparams, Hparams) or isinstance(hparams, VisionParams):
+    if isinstance(hparams, Hparams):
         hparams.num_weights_class_hyper_net = sum(p.numel() for p in
                                                   hnet.parameters() if p.requires_grad)
         hparams.num_weights_class_net = MainNetInterface.shapes_to_num_weights(param_shapes)

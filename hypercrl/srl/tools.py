@@ -87,22 +87,38 @@ def generate_srl_networks(hparams, action_space):
     networks = {}
 
     mlp = MLP(
-        512,
-        hparams.state_dim,
-        hparams.vision_params.h_dims,
-        use_batch_norm=hparams.vision_params.use_batch_norm,
+        hparams.vision_params.in_dim,
+        hparams.state_dim if not hparams.vision_params.project_direct_to_gt else hparams.numerical_state_dim,
+        hparams.vision_params.encoder_model.h_dims,
+        use_batch_norm=hparams.vision_params.encoder_model.bn,
     )
     encoder = ResNet18Encoder(mlp, hparams.vision_params)
     encoder.to(gpuid)
     encoder.train()
-    networks["encoder"] = {'model': encoder, 'params': encoder.parameters(), 'lr': hparams.vision_params.lr_hyper,
+    networks["encoder"] = {'model': encoder, 'params': encoder.parameters(),
+                           'lr': hparams.vision_params.encoder_model.lr,
                            'loss': (SlownessPrior(), VariabilityPrior(), ProportionalityPrior(), RepeatabilityPrior(),
                                     CausalityPrior()),
+                           'reg_str': hparams.vision_params.encoder_model.reg_str
                            }
 
     latent_dim = hparams.state_dim
     if hparams.vision_params.add_sin_cos_to_state:
         latent_dim *= 3
+
+    if hparams.vision_params.use_gt_model:
+        gt_model = MLP(latent_dim,
+                       hparams.numerical_state_dim,
+                       hparams.vision_params.gt_model.h_dims,
+                       use_batch_norm=False,
+                       )
+        gt_model.to(gpuid)
+        gt_model.train()
+        networks["gt"] = {'model': gt_model, 'params': gt_model.parameters(),
+                          'lr': hparams.vision_params.gt_model.lr,
+                          'loss': RMSELoss(),
+                          'reg_str': hparams.vision_params.gt_model.reg_str
+                          }
 
     if hparams.vision_params.use_forward_model:
         forward_model = MLP(latent_dim + hparams.control_dim,
@@ -114,7 +130,9 @@ def generate_srl_networks(hparams, action_space):
         forward_model.train()
         networks["forward"] = {'model': forward_model, 'params': forward_model.parameters(),
                                'lr': hparams.vision_params.forward_model_lr,
-                               'loss': RMSELoss()}
+                               'loss': RMSELoss(),
+                               'reg_str': hparams.vision_params.forward_model.reg_str
+                               }
 
     if hparams.vision_params.use_inverse_model:
         inverse_model = MLP(2 * latent_dim,
@@ -128,7 +146,9 @@ def generate_srl_networks(hparams, action_space):
 
         networks["inverse"] = {'model': inverse_model, 'params': inverse_model.parameters(),
                                'lr': hparams.vision_params.inverse_model_lr,
-                               'loss': RMSELoss()}
+                               'loss': RMSELoss(),
+                               'reg_str': hparams.vision_params.inverse_model.reg_str
+                               }
 
     return networks
 
@@ -137,8 +157,20 @@ def generate_optimizer(networks):
     return torch.optim.Adam([net for net in networks.values()])
 
 
+def calculate_gt_model(networks, x_t, gt_x_tt):
+    if "gt" not in networks:
+        return 0, None
+
+    if "times" not in networks["gt"]:
+        networks["gt"]["times"] = []
+    gt_misc = networks["gt"]
+
+    with timeit_context(gt_misc["times"]):
+        predicted_gt_x_t = gt_misc["model"](x_t)
+        return gt_misc["loss"](gt_x_tt, predicted_gt_x_t), predicted_gt_x_t
+
+
 def calculate_forward_model(networks, x_t, a_t, x_tt):
-    # Forward model loss
     if "forward" not in networks:
         return 0, None
 
@@ -153,7 +185,6 @@ def calculate_forward_model(networks, x_t, a_t, x_tt):
 
 
 def calculate_inverse_model(networks, x_t, a_t, x_tt):
-    # Forward model loss
     if "inverse" not in networks:
         return 0, None, None
 
@@ -168,26 +199,27 @@ def calculate_inverse_model(networks, x_t, a_t, x_tt):
         return inverse_misc["loss"](a_t, predicted_actions_normalized), predicted_actions, predicted_actions_normalized
 
 
-def train(task_id, networks, optimizer, logger, srl_collector, hparams, train_it):
+def calculate_regularization(networks, model):
+    if model not in networks:
+        return 0
+
+    if "reg_str" not in networks[model]:
+        return 0
+
+    if networks[model]["reg_str"] == 0:
+        return 0
+
+    return networks[model]["reg_str"] * sum([torch.sum(torch.sum(torch.abs(s))) for s in (networks[model]["params"])])
+
+
+def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hparams, train_it):
     # MASTER_THESIS Here is where the magic happens. We need to add the SRL to the training loop and add encoding prior to the dynamics update!
     # MASTER_THESIS Implement real training
 
     print("Training Vision-Based SRL")
 
-    # Data Loader
-    train_set, _ = srl_collector.get_dataset(task_id)
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=hparams.vision_params.bs, shuffle=True,
-                                               drop_last=True, num_workers=hparams.num_ds_worker)
-
     # GPUID
     gpuid = hparams.gpuid
-
-    regged_outputs = None
-
-    fisher_ests, si_omega = None, None
-
-    # Whether the regularizer will be computed during training?
-    calc_reg = task_id > 0 and hparams.beta > 0
 
     total_time_iter = []
     total_time_hnet = []
@@ -212,11 +244,15 @@ def train(task_id, networks, optimizer, logger, srl_collector, hparams, train_it
                     print(f'Iteration: {it} / {hparams.vision_params.train_vision_iters}')
 
                 optimizer.zero_grad()
-                idx, x_t, a_t, x_tt, rewards = [x.to(gpuid) for x in data]
+                idx, x_t, a_t, x_tt, rewards, gt_x_t, gt_x_tt = [x.to(gpuid) for x in data]
 
                 x_t = networks["encoder"]["model"].forward(x_t, mnet_weights)
                 x_tt = networks["encoder"]["model"].forward(x_tt, mnet_weights)
 
+                if hparams.vision_params.project_direct_to_gt:
+                    loss_gt_model = RMSELoss()(x_t, gt_x_t)
+                else:
+                    loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t)
                 loss_forward_model, _ = calculate_forward_model(networks, x_t, a_t, x_tt)
                 loss_inverse_model, _, _ = calculate_inverse_model(networks, x_t, a_t, x_tt)
                 loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality \
@@ -225,13 +261,18 @@ def train(task_id, networks, optimizer, logger, srl_collector, hparams, train_it
                 with timeit_context(total_time_hnet_optimize):
                     # We already compute the gradients, to then be able to compute delta
                     # theta.
-                    loss_task = loss_priors + loss_forward_model + loss_inverse_model
+                    # loss_gt_model = loss_gt_model + calculate_regularization(networks, "gt")
+                    # loss_inverse_model = loss_inverse_model + calculate_regularization(networks, "inverse")
+                    # loss_forward_model = loss_forward_model + calculate_regularization(networks, "forward")
+                    # loss_encoder_model = calculate_regularization(networks, "encoder")
+
+                    loss_task = loss_priors + loss_forward_model + loss_inverse_model + loss_gt_model
                     loss_task.backward()
                     optimizer.step()
 
                 logger.train_vision_step(loss_task, loss_priors, loss_slowness, loss_variability, loss_proportionality,
-                                         loss_repeatability, loss_causality, loss_forward_model, loss_inverse_model,
-                                         networks)
+                                         loss_repeatability, loss_causality, loss_gt_model, loss_forward_model,
+                                         loss_inverse_model, networks)
 
                 # Validate
                 logger.validate(networks, srl_collector)
@@ -240,18 +281,18 @@ def train(task_id, networks, optimizer, logger, srl_collector, hparams, train_it
                 if it > hparams.vision_params.train_vision_iters:
                     break
 
-    print(f"Vision-Based SRL training time", sum(total_time_iter))
-    logger.writer.add_scalar('time/train_srl', sum(total_time_iter), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_iter', np.mean(total_time_iter), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_hnet', np.mean(total_time_hnet), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_hnet_optimize', np.mean(total_time_hnet_optimize), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_forward', np.mean(total_time_forward), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_forward_optimize', np.mean(total_time_forward_optimize),
-                             (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_inverse', np.mean(total_time_inverse), (train_it + 1) * it)
-    logger.writer.add_scalar('time/train_srl_inverse_optimize', np.mean(total_time_inverse_optimize),
-                             (train_it + 1) * it)
-    logger.writer.add_scalar('time/calculate_priors', np.mean(total_time_priors), (train_it + 1) * it)
+    # print(f"Vision-Based SRL training time", sum(total_time_iter))
+    # logger.writer.add_scalar('time/train_srl', sum(total_time_iter), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_iter', np.mean(total_time_iter), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_hnet', np.mean(total_time_hnet), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_hnet_optimize', np.mean(total_time_hnet_optimize), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_forward', np.mean(total_time_forward), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_forward_optimize', np.mean(total_time_forward_optimize),
+    #                          (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_inverse', np.mean(total_time_inverse), (train_it + 1) * it)
+    # logger.writer.add_scalar('time/train_srl_inverse_optimize', np.mean(total_time_inverse_optimize),
+    #                          (train_it + 1) * it)
+    # logger.writer.add_scalar('time/calculate_priors', np.mean(total_time_priors), (train_it + 1) * it)
 
 
 def calculate_priors(networks, gpuid, hparams, idx, srl_collector, task_id, x_t, x_tt, r):

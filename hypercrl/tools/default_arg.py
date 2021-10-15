@@ -1,7 +1,5 @@
 import time
 
-from hypercrl.srl.default_arg import VisionParams
-
 
 def hdims_to_hnet_arch(h_dims):
     if h_dims == [32, 32]:
@@ -118,16 +116,37 @@ class Hparams():
 
         return hparams
 
+    def to_dict(self):
+        result = {}
 
-def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False, vision=False):
+        for key, val in self.__dict__.items():
+            if isinstance(val, Hparams):
+                for inner_key, inner_val in val.to_dict().items():
+                    full_key = f'{key}.{inner_key}'
+                    result[full_key] = inner_val
+                continue
+
+            result[key] = str(val)
+
+        return result
+
+    def to_filename(self):
+        result = ""
+
+        for key, val in self.to_dict().items():
+            result += f'{key}:{val}+'
+
+        result = result[:-1]
+        return result.replace(" ", "")
+
+
+def HP(env, robot="Panda", seed=None, save_folder='./runs/lqr', resume=False):
     hparams = Hparams()
     hparams.seed = seed if seed is not None else 2020
     hparams.save_folder = save_folder if save_folder is not None else './runs/lqr'
     hparams.resume = resume
     hparams.robot = robot
     hparams.vision_params = None
-    if vision:
-        hparams.vision_params = VisionParams()
 
     # Common train setting
     hparams.num_ds_worker = 0
@@ -958,8 +977,5 @@ def default_arg_door_pose(hparams):
     hparams.mag_noise = 0.5
 
     hparams.collector_max_capacity = -1
-
-    # Vision-Based
-    hparams.vision_params is not None and default_vision_params(hparams)
 
     return hparams

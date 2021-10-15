@@ -7,3 +7,4 @@ from .robotic_priors import SlownessPrior, VariabilityPrior, RepeatabilityPrior,
 from .tools import build_vision_model_hnet, reload_vision_model_hnet
 from .datautil import DataCollector
 from .utils import probabilities_by_size, sample_by_size, remove_and_move
+from .default_arg import *

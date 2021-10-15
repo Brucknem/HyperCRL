@@ -91,7 +91,7 @@ class ResNet18Encoder(torch.nn.Module):
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
         self.out_layer = torch.sigmoid
-        self.out_var = vparams.out_var
+        self.out_var = vparams.encoder_model.out_var
         self.weight_names = mnet.weight_names
         self.add_sin_cos_to_state = vparams.add_sin_cos_to_state
 
@@ -149,3 +149,28 @@ class ResNet18EncoderHnet(ResNet18Encoder):
             # x = self.out_layer(x)
         # print(f'Encoding Time: {ts - time.time()} s')
         return x
+
+
+class StaticFeatureExtractor(nn.Module):
+    def __init__(self, input_size=224):
+        super().__init__()
+
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Resize(input_size),
+            transforms.CenterCrop(input_size),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        self.feature_extractor = torchvision.models.resnet18(pretrained=True)
+        self.feature_extractor.fc = torch.nn.Identity()
+
+    def forward(self, x):
+        if x is None:
+            return x
+
+        with torch.no_grad():
+            x = self.transform(x)
+            if len(x.shape) == 3:
+                x = x.unsqueeze(dim=0)
+            x = self.feature_extractor(x)
+            return x

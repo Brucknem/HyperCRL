@@ -6,8 +6,9 @@ import random
 import matplotlib
 import torchvision.models
 
-from hypercrl.srl import ResNet18EncoderHnet
-from hypercrl.tools.default_arg import VisionParams
+from hypercrl.srl import ResNet18EncoderHnet, add_vision_params
+from hypercrl.srl.models import StaticFeatureExtractor
+from hypercrl.srl.utils import get_image_obs
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -407,39 +408,6 @@ def play_model(hparams, runs=10):
         env.close()
 
 
-def get_image_obs(obs: np.ndarray, hparams, reward=0):
-    ts = time.time()
-    w, h = hparams.vision_params.camera_widths, hparams.vision_params.camera_heights
-    flattened_image_dims = w * h * 3
-    img = obs[-flattened_image_dims:]
-    # MASTER_THESIS don't normalize here, convert to uint8 as much smaller memory
-    # img = img / 255.
-    img = img.astype(np.uint8)
-
-    if hparams.vision_params.debug_visualization:
-        show_img = cv2.flip(np.reshape(img, (w, h, 3)), 0)
-        cv2.imshow("Obs", show_img)
-
-        reward_img = np.zeros((100, 1000, 3), dtype=np.uint8)
-        cv2.addText(reward_img, f'{reward:.3f}', (5, 30), "Times", color=(255, 255, 255), pointSize=24)
-        cv2.imshow("Reward", reward_img)
-
-        cv2.waitKey(1)
-    # print(f'Get image obs time: {ts - time.time()} s')
-    return img
-
-
-def visualize_state(state, hparams):
-    if not hparams.vision_params.debug_visualization:
-        return
-    s = (torch.clone(state).detach().cpu().numpy())
-    s = (s - min(s[0])) / (max(s[0]) - min(s[0]))
-    w = 1600 // s.shape[1]
-    state_representation = np.kron(s, np.ones((100, w)))
-    cv2.imshow("SR", state_representation)
-    cv2.waitKey(1)
-
-
 def run(hparams, render=False):
     print(f'Running')
 
@@ -578,8 +546,6 @@ def run(hparams, render=False):
                     x_t_hat, x_t_hat_var = torch.split(x_t_hat, x_t_hat.size(-1) // 2, dim=-1)
                 encoder_times.append(time.time() - encode_time)
 
-                visualize_state(x_t_hat, hparams)
-
                 act_time = time.time()
                 u_t = agent.act(x_t_hat, task_id=task_id).detach().cpu().numpy()
                 act_times.append(time.time() - act_time)
@@ -610,37 +576,43 @@ def run(hparams, render=False):
     logger.writer.close()
 
 
-def collect_random_data(task_id, env, hparams, collector, logger, rand_pi, is_vision_based=False, srl_collector=None):
+def collect_random_data(task_id, env, hparams, collector, rand_pi, srl_collector=None):
     print(f"Collecting some random data for task {task_id}")
+    is_vision_based = hasattr(hparams, "vision_params")
+
+    feature_extractor = StaticFeatureExtractor() if is_vision_based else None
+
     x_t = env.reset()
-    x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
+    x_t, x_t_img = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
     for it in range(hparams.init_rand_steps):
         if it % 100 == 0:
             print(f"Random Step: {it} / {hparams.init_rand_steps}")
 
-        if hparams.vision_params.save_every > 0 and it % hparams.vision_params.save_every == 0:
+        if is_vision_based and hparams.vision_params.save_every > 0 and it % hparams.vision_params.save_every == 0:
             print(f'Saving...')
             srl_collector.save()
 
-        if not srl_collector.empty(task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
+        if is_vision_based and not srl_collector.empty(
+                task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
             u = srl_collector.sample_action(task_id)
         else:
             u = rand_pi.act(x_t)
         x_tt, reward, done, _ = env.step(u.reshape(env.action_space.shape))
+        x_tt, x_tt_img = get_image_obs(x_tt, hparams, reward, feature_extractor=feature_extractor)
 
         if is_vision_based:
-            x_tt = get_image_obs(x_tt, hparams, reward)
-            srl_collector.add(x_t, u, x_tt, reward, task_id)
+            srl_collector.add(task_id, x_t_img, u, x_tt_img, reward, x_t, x_tt)
         else:
             collector.add(x_t, u, x_tt, task_id)
 
         x_t = x_tt
-        logger.data_aggregate_step(x_tt, task_id, it)
+        x_t_img = x_tt_img
+
         if done:
             x_t = env.reset()
-            x_t = get_image_obs(x_t, hparams) if is_vision_based else x_t
+            x_t, x_t_img = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
 
-    if hparams.vision_params.save_every > 0:
+    if is_vision_based and hparams.vision_params.save_every > 0:
         print(f'Saving...')
         srl_collector.save()
         if hparams.vision_params.exit_after_save:
@@ -663,11 +635,12 @@ def chunked_hnet(env, seed=None, savepath=None, play=False):
 
 def hnet(env, robot="Panda", seed=None, savepath=None, resume=False, render=False, play=False, runs=10, vision=False):
     # Hyperparameters
-    hparams = HP(env=env, robot=robot, seed=seed, save_folder=savepath, resume=resume, vision=vision)
+    hparams = HP(env=env, robot=robot, seed=seed, save_folder=savepath, resume=resume)
     hparams.model = "hnet"
 
     hparams = Hparams.add_hnet_hparams(hparams, env)
-    hparams.vision_params = VisionParams.add_hnet_hparams(hparams.vision_params, env)
+    if vision:
+        hparams = add_vision_params(hparams, "gt")
 
     if play:
         play_model(hparams, runs)
