@@ -6,9 +6,7 @@ import torch
 def convert_to_array(x):
     if isinstance(x, torch.Tensor):
         x = x.detach().cpu().numpy()
-    if x.ndim == 1:
-        x = x[:, None]
-    return x
+    return np.array(x).squeeze()
 
 
 def get_image_obs(obs: np.ndarray, hparams, reward=0, feature_extractor=None):

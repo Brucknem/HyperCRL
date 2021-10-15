@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import torch
 
-from hypercrl.srl.datautil import DataCollector
+from hypercrl.srl.datautil import DataCollector, DataPoint
 from hypercrl.srl.utils import convert_to_array
 from hypercrl.tools.default_arg import Hparams
 from tests.test_base import TestBase
@@ -19,22 +19,23 @@ def clean_dirs():
     shutil.rmtree(save_path, ignore_errors=True)
 
 
-def generate_datapoint(width, height):
-    x_t = (np.random.rand(height, width, 3) * 255).astype(np.uint8)
-    u = np.random.rand(7) * 2 - 1
-    r = np.random.rand() * 20 - 10
-    gt_x_t = np.random.rand(26)
-    gt_x_tt = np.random.rand(26)
-    return x_t, u, x_t, r, gt_x_t, gt_x_tt
-
-
 class TestDataUtil(TestBase):
     """
     Unittests for the robotic priors
     """
 
+    def generate_datapoint(self):
+        val = self.datapoint_index
+        x_t = np.array([val] * 512)
+        u = np.array([val] * 7)
+        r = val
+        gt_x_t = np.array([val] * 26)
+        self.datapoint_index += 1
+
+        return DataPoint(features=x_t, action=u, next_features=x_t, reward=r, real_state=gt_x_t, next_real_state=gt_x_t)
+
     def setUp(self) -> None:
-        np.random.seed(0)
+        np.random.seed(int('0b10101010101010101010101010101', 2))
 
         self.save_path = save_path
 
@@ -56,69 +57,82 @@ class TestDataUtil(TestBase):
 
         self.hparams.vision_params.save_path = self.save_path
 
+        self.datapoint_index = 0
+
     def test_add(self) -> None:
         collector = DataCollector(hparams=self.hparams)
         task_id = 0
 
         for i in range(self.hparams.vision_params.collector_max_capacity):
-            datapoint = generate_datapoint(self.width, self.height)
+            datapoint = self.generate_datapoint()
             collector.add(task_id, *datapoint)
-            self.assertEqual(len(collector.images[task_id]), i + 1)
-            self.assertEqual(len(collector.nexts[task_id]), i + 1)
-            self.assertEqual(len(collector.actions[task_id]), i + 1)
-            self.assertEqual(len(collector.rewards[task_id]), i + 1)
-            self.assertEqual(len(collector.gt_state[task_id]), i + 1)
-            self.assertEqual(len(collector.gt_nexts[task_id]), i + 1)
+            self.assertEqual(len(collector.data_points[task_id]), i + 1)
 
-        self.assertListEqual(collector.train_inds[task_id], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-        self.assertListEqual(collector.val_inds[task_id], [])
+        self.assertListEqual(collector.train_inds[task_id],
+                             [True, True, False, True, True, False, False, True, True, True])
 
     def test_delete_on_max_capacity(self) -> None:
         collector = DataCollector(hparams=self.hparams)
         task_id = 0
 
         for i in range(self.hparams.vision_params.collector_max_capacity):
-            datapoint = generate_datapoint(self.width, self.height)
+            datapoint = self.generate_datapoint()
             collector.add(task_id, *datapoint)
-
-        datapoint = generate_datapoint(self.width, self.height)
-        collector.add(task_id, *datapoint)
-        self.assertListEqual(collector.train_inds[task_id], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-        self.assertListEqual(collector.val_inds[task_id], [])
 
         for i in range(self.hparams.vision_params.collector_max_capacity):
-            datapoint = generate_datapoint(self.width, self.height)
+            datapoint = self.generate_datapoint()
             collector.add(task_id, *datapoint)
-            self.assertEqual(len(collector.images[task_id]), self.hparams.vision_params.collector_max_capacity)
-            self.assertEqual(len(collector.nexts[task_id]), self.hparams.vision_params.collector_max_capacity)
-            self.assertEqual(len(collector.actions[task_id]), self.hparams.vision_params.collector_max_capacity)
-            self.assertEqual(len(collector.rewards[task_id]), self.hparams.vision_params.collector_max_capacity)
+            self.assertEqual(len(collector.data_points[task_id]), self.hparams.vision_params.collector_max_capacity)
 
-        self.assertListEqual(collector.train_inds[task_id], [0, 1, 2, 3, 4, 5, 9])
-        self.assertListEqual(collector.val_inds[task_id], [6, 7, 8])
+        self.assertListEqual(collector.train_inds[task_id],
+                             [True, False, True, True, True, True, False, True, True, True])
 
-        datapoint = generate_datapoint(self.width, self.height)
-        for i in range(50):
+        datapoint = self.generate_datapoint()
+        for i in range(500):
             collector.add(task_id, *datapoint)
 
-        self.assertListEqual(collector.train_inds[task_id], [0, 1, 2, 3, 6, 7, 8])
-        self.assertListEqual(collector.val_inds[task_id], [4, 5, 9])
+        self.assertListEqual(collector.train_inds[task_id],
+                             [True, True, False, True, False, True, True, True, True, True])
 
     def test_sample_action(self) -> None:
         collector = DataCollector(hparams=self.hparams)
         task_id = 0
 
         for i in range(self.hparams.vision_params.collector_max_capacity):
-            datapoint = generate_datapoint(self.width, self.height)
+            datapoint = self.generate_datapoint()
             collector.add(task_id, *datapoint)
 
         for _ in range(100):
             self.assertTrue(collector.check_same_actions_really_same(task_id))
 
             action = collector.sample_action(task_id)
-            expected_action = collector.actions[task_id][collector.same_actions[task_id][tuple(action)][0]]
+            expected_action = collector.data_points[task_id][collector.same_actions[task_id][tuple(action)][0]].action
             self.assertListAlmostEqual(expected_action, action)
-            collector.add(task_id, *generate_datapoint(self.width, self.height))
+            collector.add(task_id, *self.generate_datapoint())
+
+    def test_merge(self):
+        task_id = 0
+        other_task_id = task_id + 1
+
+        self.hparams.vision_params.collector_max_capacity = -1
+
+        a = DataCollector(hparams=self.hparams)
+        b = DataCollector(hparams=self.hparams)
+        for i in range(10):
+            data_point = self.generate_datapoint()
+            a.add(task_id, *data_point)
+            b.add(task_id, *data_point)
+            b.add(task_id, *self.generate_datapoint())
+            b.add(other_task_id, *self.generate_datapoint())
+
+        a.merge(b)
+
+        self.assertEqual(a.data_points[other_task_id], b.data_points[other_task_id])
+        self.assertEqual(a.train_inds[other_task_id], b.train_inds[other_task_id])
+        self.assertEqual(a.same_actions[other_task_id], b.same_actions[other_task_id])
+
+        self.assertEqual(a.data_points[task_id][-len(b.data_points[task_id]):], b.data_points[task_id])
+        self.assertEqual(a.train_inds[task_id][-len(b.train_inds[task_id]):], b.train_inds[task_id])
 
     def test_save_and_load(self) -> None:
         self.hparams.vision_params.collector_max_capacity = -1
@@ -129,58 +143,16 @@ class TestDataUtil(TestBase):
         task_id = 0
         clean_dirs()
 
-        datapoints = []
-        for i in range(10):
-            for _ in range(2):
-                datapoint = generate_datapoint(self.width, self.height)
-                datapoints.append(datapoint)
-                collector.add(task_id, *datapoint)
-
-            collector.save()
-
-        collector = DataCollector(hparams=self.hparams)
-        collector.load()
-        
-        for i, datapoint in enumerate(datapoints):
-            x_t, u, x_tt, r, gt_x_t, gt_x_tt = datapoint
-            self.assertListAlmostEqual(collector.actions[task_id][i], u)
-            self.assertAlmostEqual(collector.rewards[task_id][i], r)
-            self.assertListAlmostEqual(collector.gt_state[task_id][i], gt_x_t)
-            self.assertListAlmostEqual(collector.gt_nexts[task_id][i], gt_x_tt)
-
-            self.assertTrue(np.array_equal(collector.images[task_id][i], x_t.reshape((3, self.width, self.height))))
-            self.assertTrue(np.array_equal(collector.nexts[task_id][i], x_tt.reshape((3, self.width, self.height))))
-
-        clean_dirs()
-        collector = DataCollector(hparams=self.hparams)
-        for i in range(self.hparams.vision_params.save_every):
-            x_t, u, x_tt, r, gt_x_t, gt_x_tt = generate_datapoint(self.width, self.height)
-            if not collector.empty(task_id) and np.random.rand() < 0.8:
-                u = collector.sample_action(task_id)
-
-            collector.add(task_id, x_t, u, x_tt, r, gt_x_t, gt_x_tt)
+        for i in range(100):
+            collector.add(task_id, *(self.generate_datapoint()))
 
         backup_collector = copy.deepcopy(collector)
-        clean_dirs()
         collector.save()
 
         collector = DataCollector(hparams=self.hparams)
         collector.load()
 
         self.assertEqual(backup_collector, collector)
-
-        collector.save()
-        collector = DataCollector(hparams=self.hparams)
-        collector.load()
-
-        for i in range(self.hparams.vision_params.save_every):
-            self.assertTrue(np.array_equal(collector.images[task_id][i], collector.images[task_id][i + 100]))
-            self.assertTrue(np.array_equal(collector.nexts[task_id][i], collector.nexts[task_id][i + 100]))
-            self.assertTrue(np.array_equal(collector.rewards[task_id][i], collector.rewards[task_id][i + 100]))
-            self.assertTrue(np.array_equal(collector.actions[task_id][i], collector.actions[task_id][i + 100]))
-            self.assertTrue(np.array_equal(collector.gt_state[task_id][i], collector.gt_state[task_id][i + 100]))
-            self.assertTrue(np.array_equal(collector.gt_nexts[task_id][i], collector.gt_nexts[task_id][i + 100]))
-
         clean_dirs()
 
 

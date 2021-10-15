@@ -16,32 +16,59 @@ import pandas as pd
 from hypercrl.srl.utils import sample_by_size, remove_and_move, probabilities_by_size, convert_to_array
 
 
+class DataPoint:
+    def __init__(self, features, action, next_features, reward, real_state=None, next_real_state=None):
+        self.features = features
+        self.action = action
+        self.next_features = next_features
+        self.reward = reward
+        self.real_state = real_state
+        self.next_real_state = next_real_state
+
+    def __eq__(self, other):
+        return isinstance(other, DataPoint) and \
+               np.array_equal(self.features, other.features, equal_nan=True) and \
+               np.array_equal(self.action, other.action, equal_nan=True) and \
+               np.array_equal(self.next_features, other.next_features, equal_nan=True) and \
+               np.array_equal(self.reward, other.reward, equal_nan=True) and \
+               np.array_equal(self.real_state, other.real_state, equal_nan=True) and \
+               np.array_equal(self.next_real_state, other.next_real_state, equal_nan=True)
+
+    def __str__(self):
+        return f'features: {np.linalg.norm(self.features):.4f}, ' \
+               f'action: {np.linalg.norm(self.action):.4f}, ' \
+               f'next_features: {np.linalg.norm(self.next_features):.4f}, ' \
+               f'reward: {self.reward:.4f}, ' \
+               f'real_state: {np.linalg.norm(self.real_state):.4f}, ' \
+               f'next_real_state: {np.linalg.norm(self.next_real_state):.4f}, '
+
+    def __getitem__(self, item):
+        if item == 0 or item == 'features':
+            return self.features
+        if item == 1 or item == 'action':
+            return self.action
+        if item == 2 or item == 'next_features':
+            return self.next_features
+        if item == 3 or item == 'reward':
+            return self.reward
+        if item == 4 or item == 'real_state':
+            return self.real_state
+        if item == 5 or item == 'next_real_state':
+            return self.next_real_state
+        raise IndexError(f'{item} not in datapoint')
+
+
 class DataCollector:
     """
     Image data collector for the SRL module
     """
 
+    features_to_write = ['features', 'action', 'next_features', 'reward', 'real_state', 'next_real_state', 'train_inds']
+
     def __init__(self, hparams):
-        self.images = {}
-        self.actions = {}
-        # MASTER_THESIS Remove nexts for better RAM usage
-        self.nexts = {}
-        self.rewards = {}
-
-        self.gt_nexts = {}
-        self.gt_state = {}
-
+        self.data_points = {}
         self.train_inds = {}
-        self.val_inds = {}
-
         self.same_actions = {}
-
-        self.next_mode = hparams.dnn_out
-        self.normalize_xu = hparams.normalize_xu
-        self.env_name = hparams.env
-
-        self.image_dims = (-1, 3, hparams.vision_params.camera_widths, hparams.vision_params.camera_heights)
-        self.cv_image_dims = (hparams.vision_params.camera_widths, hparams.vision_params.camera_heights, 3)
 
         self.max_capacity = hparams.vision_params.collector_max_capacity
 
@@ -52,69 +79,92 @@ class DataCollector:
         self.save_suffix = hparams.vision_params.save_suffix
         self.load_suffix = hparams.vision_params.load_suffix
 
+        self.hparams = hparams
+
     def num_tasks(self):
-        return len(self.images)
+        return len(self.data_points)
 
-    def add(self, task_id, x_t, u, x_tt, r, gt_x_t=None, gt_x_tt=None):
+    def add(self, task_id, features, action, next_features, reward, real_state=None, next_real_state=None):
         # Convert Format
-        u = convert_to_array(u)
-        gt_x_t = convert_to_array(gt_x_t)
-        gt_x_tt = convert_to_array(gt_x_tt)
+        features, action, next_features, real_state, next_real_state = \
+            (convert_to_array(x) for x in [features, action, next_features, real_state, next_real_state])
 
-        x_t = x_t.reshape(self.image_dims[1:])
-        x_tt = x_tt.reshape(self.image_dims[1:])
+        datapoint = DataPoint(features=features, action=action, next_features=next_features, reward=reward,
+                              real_state=real_state, next_real_state=next_real_state)
 
-        if task_id in self.images:
-            self.images[task_id].append(x_t)
-            self.actions[task_id].append(u)
-            self.nexts[task_id].append(x_tt)
-            self.rewards[task_id].append(r)
-            self.gt_state[task_id].append(gt_x_t)
-            self.gt_nexts[task_id].append(gt_x_tt)
-        else:
-            self.images[task_id] = [x_t]
-            self.actions[task_id] = [u]
-            self.nexts[task_id] = [x_tt]
-            self.rewards[task_id] = [r]
-            self.gt_state[task_id] = [gt_x_t]
-            self.gt_nexts[task_id] = [gt_x_tt]
+        if task_id not in self.data_points:
+            self.data_points[task_id] = []
+        self.data_points[task_id].append(datapoint)
 
         if task_id not in self.train_inds:
             self.train_inds[task_id] = []
-            self.val_inds[task_id] = []
+        self.train_inds[task_id].append(np.random.rand() < 0.75)
 
-        # Train or val
-        # is_train = len(self.train_inds[task_id]) < 3 * len(self.val_inds[task_id])
-        is_train = np.random.rand() < 0.75
-
-        ind = len(self.images[task_id]) - 1
-        if is_train:
-            self.train_inds[task_id].append(ind)
-        else:
-            self.val_inds[task_id].append(ind)
+        ind = len(self.data_points[task_id]) - 1
 
         if task_id not in self.same_actions:
             self.same_actions[task_id] = {}
-        action = tuple(np.squeeze(u))
+        action = tuple(np.squeeze(action))
         if action not in self.same_actions[task_id]:
             self.same_actions[task_id][action] = []
         self.same_actions[task_id][action].append(ind)
 
         self.delete_on_max_capacity(task_id)
 
+    def get_train_inds(self, task_id):
+        return np.where(self.train_inds[task_id])[0]
+
+    def get_val_inds(self, task_id):
+        return np.where(~np.array(self.train_inds[task_id]))[0]
+
+    def get_features(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].features
+        return np.array([x.features for x in self.data_points[task_id]])
+
+    def get_actions(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].action
+        return np.array([x.action for x in self.data_points[task_id]])
+
+    def get_next_features(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].next_features
+        return np.array([x.next_features for x in self.data_points[task_id]])
+
+    def get_rewards(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].reward
+        return np.array([x.reward for x in self.data_points[task_id]])
+
+    def get_real_states(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].real_state
+        return np.array([x.real_state for x in self.data_points[task_id]])
+
+    def get_next_real_state(self, task_id, idx=-1):
+        if idx >= 0:
+            return self.data_points[task_id][idx].next_real_state
+        return np.array([x.next_real_state for x in self.data_points[task_id]])
+
+    def get_values(self, task_id, item):
+        if item == 'train_inds':
+            return self.train_inds[task_id]
+        return np.array([x[item] for x in self.data_points[task_id]])
+
     def delete_on_max_capacity(self, task_id):
         if self.max_capacity <= 0:
             return
 
-        while len(self.images[task_id]) > self.max_capacity:
-            remove_from = self.train_inds[task_id] if len(self.train_inds[task_id]) > 2 * len(
-                self.val_inds[task_id]) else self.val_inds[task_id]
+        while len(self.data_points[task_id]) > self.max_capacity:
+            remove_from_train = sum(self.train_inds[task_id]) >= 0.75 * len(self.train_inds[task_id])
+            remove_from = self.get_train_inds(task_id) if remove_from_train else self.get_val_inds(task_id)
 
-            idx = sample_by_size(np.array(self.rewards[task_id])[remove_from], lower_as_median=True)
+            idx = sample_by_size(self.get_rewards(task_id)[remove_from], lower_as_median=True)
             idx = remove_from[idx]
 
-            self.train_inds[task_id] = remove_and_move(self.train_inds[task_id], idx)
-            self.val_inds[task_id] = remove_and_move(self.val_inds[task_id], idx)
+            del self.train_inds[task_id][idx]
+            del self.data_points[task_id][idx]
 
             to_del = []
             for key in self.same_actions[task_id].keys():
@@ -124,15 +174,6 @@ class DataCollector:
 
             for key in to_del:
                 del self.same_actions[task_id][key]
-
-            del self.images[task_id][idx]
-            del self.actions[task_id][idx]
-            del self.nexts[task_id][idx]
-            del self.rewards[task_id][idx]
-            del self.gt_state[task_id][idx]
-            del self.gt_nexts[task_id][idx]
-
-        # print(len(self.states[task_id]))
 
     def get_dataset(self, task_id, ds_range=None):
         """
@@ -249,183 +290,89 @@ class DataCollector:
         return np.array(action)
 
     def empty(self, task_id):
-        return len(self.images) == 0 or len(self.images[task_id]) == 0
+        return task_id not in self.data_points or len(self.data_points[task_id]) == 0
+
+    def merge(self, other):
+        for task_id in self.data_points:
+            if not other.empty(task_id):
+                old_len = len(self.data_points[task_id])
+                self.data_points[task_id] += other.data_points[task_id]
+                self.train_inds[task_id] += other.train_inds[task_id]
+                for key, value in other.same_actions[task_id].items():
+                    if key not in self.same_actions[task_id]:
+                        self.same_actions[task_id][key] = []
+                    self.same_actions[task_id][key] += list(np.array(value) + old_len)
+                self.check_same_actions_really_same(task_id)
+
+        for task_id in other.data_points:
+            if self.empty(task_id):
+                self.data_points[task_id] = other.data_points[task_id]
+                self.train_inds[task_id] = other.train_inds[task_id]
+                self.same_actions[task_id] = other.same_actions[task_id]
 
     def save(self):
-        for task_id in self.images.keys():
+        for task_id in self.data_points:
             if self.empty(task_id):
                 continue
             save_path = pathlib.Path(self.save_path).joinpath(str(self.save_suffix)).joinpath(str(task_id))
-            image_path = save_path.joinpath("images")
-            nexts_path = save_path.joinpath("nexts")
+            save_path.mkdir(parents=True, exist_ok=True)
 
-            for p in [save_path, image_path, nexts_path]:
-                p.mkdir(parents=True, exist_ok=True)
+            # MASTER_THESIS Load old when saving
+            # load_collector = DataCollector(self.hparams)
+            # load_collector.load_task(task_id)
+            #
+            # self.merge(load_collector)
 
-            actions_path = save_path.joinpath("actions.csv")
-            rewards_path = save_path.joinpath("rewards.csv")
-            indices_path = save_path.joinpath("indices.csv")
-            gt_states_path = save_path.joinpath("gt_states.csv")
-            gt_nexts_path = save_path.joinpath("gt_nexts.csv")
-
-            actions = pd.DataFrame(np.array(self.actions[task_id]).squeeze())
-            rewards = pd.DataFrame(np.array(self.rewards[task_id]).squeeze())
-            gt_states = pd.DataFrame(np.array(self.gt_state[task_id]).squeeze())
-            gt_nexts = pd.DataFrame(np.array(self.gt_nexts[task_id]).squeeze())
-            indices = pd.DataFrame(
-                [1 if i in self.train_inds[task_id] else 0 for i in range(len(self.images[task_id]))])
-            last_saved_index = 0
-            if actions_path.exists():
-                old_actions = pd.read_csv(actions_path, index_col=False)
-                old_rewards = pd.read_csv(rewards_path, index_col=False)
-                old_indices = pd.read_csv(indices_path, index_col=False)
-                old_gt_states = pd.read_csv(gt_states_path, index_col=False)
-                old_gt_nexts = pd.read_csv(gt_nexts_path, index_col=False)
-
-                last_saved_index = len(old_actions)
-
-                old_actions.columns = actions.columns
-                old_rewards.columns = rewards.columns
-                old_indices.columns = indices.columns
-                old_gt_states.columns = gt_states.columns
-                old_gt_nexts.columns = gt_nexts.columns
-
-                actions = old_actions.append(actions)
-                rewards = old_rewards.append(rewards)
-                indices = old_indices.append(indices)
-                gt_states = old_gt_states.append(gt_states)
-                gt_nexts = old_gt_nexts.append(gt_nexts)
-
-            actions.to_csv(actions_path, index=False)
-            rewards.to_csv(rewards_path, index=False)
-            indices.to_csv(indices_path, index=False)
-            gt_states.to_csv(gt_states_path, index=False)
-            gt_nexts.to_csv(gt_nexts_path, index=False)
-
-            for i in range(len(self.images[task_id])):
-                cv2.imwrite(str(image_path.joinpath(f"img_{i + last_saved_index}.png")),
-                            self.images[task_id][i].reshape(self.cv_image_dims))
-                cv2.imwrite(str(nexts_path.joinpath(f"next_{i + last_saved_index}.png")),
-                            self.nexts[task_id][i].reshape(self.cv_image_dims))
-
-            self.clear(task_id)
-            self.same_actions[task_id] = {key: [None] * len(val) for key, val in self.same_actions[task_id].items()}
+            new_values = [pd.DataFrame(self.get_values(task_id, feature)) for feature in
+                          DataCollector.features_to_write]
+            paths = [save_path.joinpath(f'{path}.csv') for path in DataCollector.features_to_write]
+            for path, values in zip(paths, new_values):
+                values.to_csv(path, index=False, header=False)
 
     def clear(self, task_id):
-        self.images[task_id] = []
-        self.nexts[task_id] = []
-        self.actions[task_id] = []
-        self.rewards[task_id] = []
+        self.data_points[task_id] = []
         self.train_inds[task_id] = []
-        self.val_inds[task_id] = []
-        self.gt_state[task_id] = []
-        self.gt_nexts[task_id] = []
 
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
         for task_id in [x.name for x in load_path_base.iterdir() if x.is_dir()]:
-            task_id = int(task_id)
-            self.clear(task_id)
+            self.load_task(int(task_id))
 
-            load_path = load_path_base.joinpath(str(task_id))
-            image_path = load_path.joinpath("images")
-            nexts_path = load_path.joinpath("nexts")
+    def load_task(self, task_id):
+        self.clear(task_id)
+        load_path = pathlib.Path(self.save_path).joinpath(self.load_suffix).joinpath(str(task_id))
 
-            actions = pd.read_csv(str(load_path.joinpath("actions.csv"))).to_numpy()
-            actions = list(np.expand_dims(actions, axis=2))
-            gt_states = pd.read_csv(str(load_path.joinpath("gt_states.csv"))).to_numpy()
-            gt_states = list(np.expand_dims(gt_states, axis=2))
-            gt_nexts = pd.read_csv(str(load_path.joinpath("gt_nexts.csv"))).to_numpy()
-            gt_nexts = list(np.expand_dims(gt_nexts, axis=2))
+        if not load_path.exists():
+            return
 
-            rewards = list(pd.read_csv(str(load_path.joinpath("rewards.csv"))).to_numpy().squeeze())
-            indices = list(pd.read_csv(str(load_path.joinpath("indices.csv"))).to_numpy().squeeze())
-            train_inds = list(np.where(indices)[0])
+        load_paths = [pathlib.Path(f'{load_path.joinpath(path)}.csv') for path in DataCollector.features_to_write]
+        load_paths = [path if path.exists() else None for path in load_paths]
+        if None in load_paths:
+            return
 
-            if self.load_max <= 0:
-                indices_to_keep = list(range(len(rewards)))
-            else:
-                p = probabilities_by_size(rewards, lower_as_median=False)
-                indices_to_keep = [i for i in
-                                   np.random.choice(range(len(rewards)), size=self.load_max, replace=False, p=p)]
+        values = [pd.read_csv(path, index_col=False, header=None).to_numpy() for path in load_paths]
+        values[6] = [True if x else False for x in values[6]]
 
-            tmp_train_inds = []
-            tmp_val_inds = []
+        for i in range(len(values[0])):
+            datapoint = DataPoint(features=values[0][i], action=values[1][i], next_features=values[2][i],
+                                  reward=float(values[3][i]), real_state=values[4][i], next_real_state=values[5][i])
+            self.add(task_id, *datapoint)
+            self.train_inds[task_id][-1] = values[6][i]
 
-            for ind in indices_to_keep:
-                running_index = len(self.images[task_id])
-                if running_index % 100 == 0:
-                    print(f'Loaded {running_index} / {len(indices_to_keep)}')
-                img_path = image_path.joinpath(f'img_{ind}.png')
-                x_t = cv2.imread(str(img_path))
-                next_path = nexts_path.joinpath(f'next_{ind}.png')
-                x_tt = cv2.imread(str(next_path))
-                u = actions[ind]
-                r = rewards[ind]
-                gt_x_t = gt_states[ind]
-                gt_x_tt = gt_nexts[ind]
-
-                self.add(task_id, x_t, u, x_tt, r, gt_x_t, gt_x_tt)
-
-                if ind in train_inds:
-                    tmp_train_inds.append(running_index)
-                else:
-                    tmp_val_inds.append(running_index)
-
-            self.train_inds[task_id] = tmp_train_inds
-            self.val_inds[task_id] = tmp_val_inds
-
-            assert self.check_same_actions_really_same(task_id)
+        assert self.check_same_actions_really_same(task_id)
 
     def __eq__(self, other):
         if not isinstance(other, DataCollector):
             return False
 
-        for a, b, in zip(self.images.keys(), other.images.keys()):
-            if a != b:
-                return False
-
-        for task_id in self.images.keys():
-            for pair in [
-                zip(self.images[task_id], other.images[task_id]),
-                zip(self.actions[task_id], other.actions[task_id]),
-                zip(self.nexts[task_id], other.nexts[task_id]),
-                zip(self.rewards[task_id], other.rewards[task_id]),
-                zip(self.train_inds[task_id], other.train_inds[task_id]),
-                zip(self.val_inds[task_id], other.val_inds[task_id]),
-            ]:
-                for a, b in pair:
-                    if not np.allclose(a, b):
-                        return False
-
-            if not self.check_same_actions_really_same(task_id):
-                return False
-            if not other.check_same_actions_really_same(task_id):
-                return False
-
-            if len(self.same_actions[task_id]) != len(other.same_actions[task_id]):
-                return False
-
-            for action in self.same_actions[task_id]:
-                index = -1
-                other_action = None
-                for i, other_action in enumerate(other.same_actions[task_id].keys()):
-                    if np.allclose(action, other_action):
-                        index = i
-                        break
-                if index < 0:
-                    return False
-
-                for a, b in zip(self.same_actions[task_id][action], other.same_actions[task_id][other_action]):
-                    if not np.allclose(a, b):
-                        return False
-
-        return True
+        return self.data_points == other.data_points and \
+               self.train_inds == other.train_inds and \
+               self.same_actions == other.same_actions
 
     def check_same_actions_really_same(self, task_id):
         for key, value in self.same_actions[task_id].items():
             for idx in value:
-                for a, b in zip(list(key), list(self.actions[task_id][idx])):
+                for a, b in zip(list(key), list(self.get_actions(task_id)[idx])):
                     if not np.allclose(a, b):
                         return False
         return True
