@@ -68,13 +68,14 @@ def train(hparams, use_bn: bool = False, dropout: float = -1, latent_dim: int = 
                               num_workers=hparams.num_ds_worker)
     hypercrl.srl.tools.train(task_id, networks, optimizer, monitor_srl, train_loader, srl_collector, hparams, task_id)
 
-    params_dict = {"use_bn": use_bn, "dropout": dropout, "latent_dim": latent_dim,
-                   "encoder_h_dim": float(encoder_h_dim),
-                   "gt_depth": encoder_depth, "lr_hyper": lr_hyper, "lr_forward": lr_forward, "lr_inverse": lr_inverse,
-                   "lr_gt": lr_gt}
+    params_dict = {"use_bn": bool(use_bn), "dropout": float(dropout), "latent_dim": int(latent_dim),
+                   "encoder_h_dim": int(encoder_h_dim),
+                   "encoder_depth": int(encoder_depth), "lr_hyper": float(lr_hyper), "lr_forward": float(lr_forward),
+                   "lr_inverse": float(lr_inverse),
+                   "lr_gt": float(lr_gt)}
 
     for task_id, values in enumerate(monitor_srl.val_stats):
-        metric_dict = {key: np.min(value) for key, value in values.items() if key != "time"}
+        metric_dict = {key: float(np.min(value)) for key, value in values.items() if key != "time"}
         monitor_srl.writer.add_hparams({**{"task_id": task_id}, **params_dict}, metric_dict)
 
 
@@ -88,10 +89,8 @@ if __name__ == "__main__":
     srl_collector = DataCollector(hparams)
     srl_collector.load()
 
-    # train(hparams, 5e-3)
-
-    # threaded = True
-    threaded = False
+    threaded = True
+    # threaded = False
 
     while True:
         threads = []
