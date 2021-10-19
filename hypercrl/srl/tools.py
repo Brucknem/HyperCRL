@@ -88,7 +88,7 @@ def generate_srl_networks(hparams, action_space):
 
     mlp = MLP(
         hparams.vision_params.in_dim,
-        hparams.state_dim if not hparams.vision_params.project_direct_to_gt else hparams.numerical_state_dim,
+        hparams.state_dim,
         hparams.vision_params.encoder_model.h_dims,
         use_batch_norm=hparams.vision_params.encoder_model.bn,
         dropout_rate=hparams.vision_params.encoder_model.dropout,
@@ -107,19 +107,18 @@ def generate_srl_networks(hparams, action_space):
     if hparams.vision_params.add_sin_cos_to_state:
         latent_dim *= 3
 
-    if hparams.vision_params.use_gt_model:
-        gt_model = MLP(latent_dim,
-                       hparams.numerical_state_dim,
-                       hparams.vision_params.gt_model.h_dims,
-                       use_batch_norm=False,
-                       )
-        gt_model.to(gpuid)
-        gt_model.train()
-        networks["gt"] = {'model': gt_model, 'params': gt_model.parameters(),
-                          'lr': hparams.vision_params.gt_model.lr,
-                          'loss': RMSELoss(),
-                          'reg_str': hparams.vision_params.gt_model.reg_str
-                          }
+    gt_model = MLP(latent_dim,
+                   hparams.numerical_state_dim,
+                   hparams.vision_params.gt_model.h_dims,
+                   use_batch_norm=False,
+                   )
+    gt_model.to(gpuid)
+    gt_model.train()
+    networks["gt"] = {'model': gt_model, 'params': gt_model.parameters(),
+                      'lr': hparams.vision_params.gt_model.lr,
+                      'loss': RMSELoss(),
+                      'reg_str': hparams.vision_params.gt_model.reg_str
+                      }
 
     if hparams.vision_params.use_forward_model:
         forward_model = MLP(latent_dim + hparams.control_dim,
@@ -250,13 +249,11 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
                 x_t = networks["encoder"]["model"].forward(x_t, mnet_weights)
                 x_tt = networks["encoder"]["model"].forward(x_tt, mnet_weights)
 
-                if hparams.vision_params.project_direct_to_gt:
-                    loss_gt_model = (RMSELoss()(x_t, gt_x_t) + RMSELoss()(x_tt, gt_x_tt))
-                else:
-                    loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t)
-                    loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
-                    loss_gt_model = loss_gt_model + loss_gtt_model
+                loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t)
+                loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
+                loss_gt_model = loss_gt_model + loss_gtt_model
                 loss_gt_model = loss_gt_model / 2.
+
                 loss_forward_model, _ = calculate_forward_model(networks, x_t, a_t, x_tt)
                 loss_inverse_model, _, _ = calculate_inverse_model(networks, x_t, a_t, x_tt)
                 loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality \
@@ -270,7 +267,11 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
                     # loss_forward_model = loss_forward_model + calculate_regularization(networks, "forward")
                     # loss_encoder_model = calculate_regularization(networks, "encoder")
 
-                    loss_task = loss_priors + loss_forward_model + loss_inverse_model + loss_gt_model
+                    loss_task = loss_priors + loss_forward_model + loss_inverse_model
+                    if hparams.vision_params.train_on_gt_model:
+                        loss_task = loss_task + loss_gt_model
+                    else:
+                        loss_gt_model.backward()
                     loss_task.backward()
                     optimizer.step()
 

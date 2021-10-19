@@ -25,7 +25,7 @@ import tensorboard
 def hparams_to_tensorboard_folder(hparams):
     folder = f'{time.time()}#LDIM:{hparams.state_dim}'
     folder = folder + "#ENCODER_" + hparams.vision_params.encoder_model.to_filename()
-    folder = folder + "#GT_" + hparams.vision_params.gt_model.to_filename() if hparams.vision_params.use_gt_model else folder
+    folder = folder + "#GT_" + hparams.vision_params.gt_model.to_filename()
     folder = folder + "#FORWARD_" + hparams.vision_params.forward_model.to_filename() if hparams.vision_params.use_forward_model else folder
     folder = folder + "#INVERSE_" + hparams.vision_params.inverse_model.to_filename() if hparams.vision_params.use_inverse_model else folder
     folder = folder.replace(" ", "")
@@ -90,6 +90,7 @@ if __name__ == "__main__":
 
     # train(hparams, 5e-3)
 
+    # threaded = True
     threaded = False
 
     while True:
@@ -102,13 +103,13 @@ if __name__ == "__main__":
             latent_dim = 2048
 
             lr_hyper = np.random.uniform(1e-2, 1e-3)
-            encoder_h_dim = np.random.choice([2048, 4196, 8192])
+            encoder_h_dim = np.random.choice([4196, 8192])
             use_bn = True  # np.random.random() < 0.5
             encoder_depth = 1  # np.random.choice([1])
             l = [-1, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
             dropout = -1  # np.random.choice(l, p=[0.5] + [0.5 / (len(l) - 1)] * (len(l) - 1))
 
-            latent_dim = np.random.choice([256, 512, 1024, 2048, 4196])
+            latent_dim = np.random.choice([128, 256, 512])
 
             lr_gt = np.random.uniform(1e-2, 1e-3)
 
@@ -119,8 +120,7 @@ if __name__ == "__main__":
             else:
                 threads.append(Process(target=train, args=(
                     hparams, use_bn, dropout, latent_dim, encoder_h_dim, encoder_depth, lr_hyper, lr_forward,
-                    lr_inverse,
-                    lr_gt)))
+                    lr_inverse, lr_gt)))
             # time.sleep(2)
 
         for thread in threads:

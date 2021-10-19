@@ -59,11 +59,10 @@ class MonitorSRL(MonitorBase):
         make_dot(x_t, params=(dict(list(networks["encoder"]["model"].named_parameters())))).render(
             save_path / "encoder", format="png")
 
-        if hparams.vision_params.use_gt_model:
-            x_t = torch.zeros_like(x_t)
-            val = networks["gt"]["model"].forward(x_t, None)
-            make_dot(val, params=(dict(list(networks["gt"]["model"].named_parameters())))).render(
-                save_path / "gt", format="png")
+        x_t = torch.zeros_like(x_t)
+        val = networks["gt"]["model"].forward(x_t, None)
+        make_dot(val, params=(dict(list(networks["gt"]["model"].named_parameters())))).render(
+            save_path / "gt", format="png")
 
         if hparams.vision_params.use_forward_model:
             x_a_t = torch.hstack((x_t, a_t))
@@ -96,6 +95,8 @@ class MonitorSRL(MonitorBase):
         self.writer.add_scalar(f'{prefix}_srl/task_loss', loss_task, i)
         self.writer.add_scalar(f'{prefix}_srl/regularizer', loss_reg_srl, i)
 
+        self.writer.add_scalar(f'{prefix}_srl/loss_gt_model', loss_gt_model, i)
+
         if self.hparams.vision_params.use_priors:
             self.writer.add_scalar(f'{prefix}_srl/robotic_priors', loss_robotic_priors, i)
             self.writer.add_scalar(f'{prefix}_priors/_total', loss_robotic_priors, i)
@@ -105,8 +106,6 @@ class MonitorSRL(MonitorBase):
             self.writer.add_scalar(f'{prefix}_priors/repeatability_prior', loss_repeatability, i)
             self.writer.add_scalar(f'{prefix}_priors/causality_prior', loss_causality, i)
 
-        if self.hparams.vision_params.use_gt_model:
-            self.writer.add_scalar(f'{prefix}_srl/loss_gt_model', loss_gt_model, i)
         if self.hparams.vision_params.use_forward_model:
             self.writer.add_scalar(f'{prefix}_srl/loss_forward_model', loss_forward_model, i)
         if self.hparams.vision_params.use_inverse_model:
@@ -247,14 +246,9 @@ class MonitorSRL(MonitorBase):
                 x_t = networks["encoder"]["model"].forward(x_t, None)
                 x_tt = networks["encoder"]["model"].forward(x_tt, None)
 
-                if self.hparams.vision_params.project_direct_to_gt:
-                    loss_gt_model = (RMSELoss()(x_t, gt_x_t) + RMSELoss()(x_tt, gt_x_tt))
-                    predicted_gt_x_t = x_t
-                else:
-                    loss_gt_model, predicted_gt_x_t = calculate_gt_model(networks, x_t, gt_x_t)
-                    loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
-                    loss_gt_model = loss_gt_model + loss_gtt_model
-
+                loss_gt_model, predicted_gt_x_t = calculate_gt_model(networks, x_t, gt_x_t)
+                loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
+                loss_gt_model = loss_gt_model + loss_gtt_model
                 loss_gt_model = loss_gt_model / 2.
                 losses_gt_model += loss_gt_model
 
@@ -275,7 +269,9 @@ class MonitorSRL(MonitorBase):
                 losses_repeatability += loss_repeatability
                 losses_causality += loss_causality
 
-                loss = loss_priors + loss_forward_model + loss_inverse_model + loss_gt_model
+                loss = loss_priors + loss_forward_model + loss_inverse_model
+                if self.hparams.vision_params.train_on_gt_model:
+                    loss = loss + loss_gt_model
                 losses += loss
 
                 latent_states += (x_t.mean(0))
