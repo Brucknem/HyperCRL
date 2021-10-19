@@ -155,6 +155,33 @@ class TestDataUtil(TestBase):
         self.assertEqual(backup_collector, collector)
         clean_dirs()
 
+    def test_get_dataset(self):
+        collector = DataCollector(hparams=self.hparams)
+        task_id = 0
+        clean_dirs()
+
+        for i in range(self.hparams.vision_params.collector_max_capacity):
+            collector.add(task_id, *(self.generate_datapoint()))
+
+        train_set, val_set = collector.get_dataset(task_id)
+        for data in train_set:
+            index, feature, action, next_feature, reward, real_state, next_real_state = data
+            index = float(index)
+            self.check_values_equal_index(action, feature, index, next_feature, next_real_state, real_state, reward)
+
+        for data in val_set:
+            index, feature, action, next_feature, reward, real_state, next_real_state = data
+            index = float(index)
+            self.check_values_equal_index(action, feature, index, next_feature, next_real_state, real_state, reward)
+
+    def check_values_equal_index(self, action, feature, index, next_feature, next_real_state, real_state, reward):
+        self.assertAlmostEqual(sum(feature) / len(feature), index)
+        self.assertAlmostEqual(sum(action) / len(action), index)
+        self.assertAlmostEqual(sum(next_feature) / len(next_feature), index)
+        self.assertAlmostEqual(reward, index)
+        self.assertAlmostEqual(sum(real_state) / len(real_state), index)
+        self.assertAlmostEqual(sum(next_real_state) / len(next_real_state), index)
+
 
 if __name__ == '__main__':
     unittest.main()

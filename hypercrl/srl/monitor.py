@@ -9,7 +9,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchviz import make_dot
 
 from hypercrl.srl import layer_names
-from hypercrl.srl.tools import calculate_priors, calculate_forward_model, calculate_inverse_model, calculate_gt_model
+from hypercrl.srl.tools import calculate_priors, calculate_forward_model, calculate_inverse_model, calculate_gt_model, \
+    RMSELoss
 from hypercrl.srl.utils import calc_mean
 from hypercrl.tools import MonitorBase
 
@@ -40,7 +41,6 @@ class MonitorSRL(MonitorBase):
         self.loss_gt_model = 0
         self.loss_forward_model = 0
         self.loss_inverse_model = 0
-
         self.srl_print_train_every = hparams.vision_params.print_train_every
         # for model_misc in networks.values():
         #     self.writer.add_graph(model_misc["model"])
@@ -168,13 +168,22 @@ class MonitorSRL(MonitorBase):
 
         if self.train_iter % self.log_hist_every == 0:
             for model_name, model_misc in networks.items():
-                for i, (name, weight) in enumerate(
-                        zip(model_misc["model"].weight_names, list(model_misc["model"].parameters()))):
-                    # print(i, name)
-                    self.writer.add_histogram(f'{model_name}/weight/{i}_{name}', weight.flatten(), self.train_iter)
-                    self.writer.add_histogram(f'{model_name}/_grad/{i}_{name}', weight.grad.flatten(), self.train_iter)
-                    self.writer.add_scalar(f'{model_name}/grad/{i}_{name}', float(weight.grad.norm()), self.train_iter)
+                self.log_weights(model_misc, model_name, True)
+                self.log_weights(model_misc, model_name, False)
         self.train_iter += 1
+
+    def log_weights(self, model_misc, model_name, linear_layers):
+        skipped = 0
+        for i, (name, weight) in enumerate(
+                zip(model_misc["model"].weight_names, list(model_misc["model"].parameters()))):
+            # print(i, name)
+            if linear_layers is str(name).startswith("batch_norm"):
+                skipped += 1
+                continue
+            self.writer.add_histogram(f'{model_name}_weight/{i - skipped}_{name}', weight.flatten(), self.train_iter)
+            self.writer.add_histogram(f'{model_name}_grad/{i - skipped}_{name}', weight.grad.flatten(), self.train_iter)
+            self.writer.add_scalar(f'{model_name}/grad/{i - skipped}_{name}', float(weight.grad.norm()),
+                                   self.train_iter)
 
     def validate(self, networks, srl_collector):
         if (self.train_iter % self.eval_every) == 0:
@@ -216,6 +225,8 @@ class MonitorSRL(MonitorBase):
         losses_priors, losses_slowness, losses_variability, losses_proportionality, losses_repeatability, losses_causality = 0, 0, 0, 0, 0, 0
         losses = 0
         states = 0
+        states_diff = 0
+        states_error = 0
         latent_states = 0
         actions_diff = []
         actions_normalized_diff = []
@@ -226,6 +237,8 @@ class MonitorSRL(MonitorBase):
         loader = DataLoader(val_sets, batch_size=bs, num_workers=self.hparams.num_ds_worker, drop_last=True)
 
         num_batches = len(loader)
+        if num_batches <= 0:
+            return [-1] * 5
 
         with torch.no_grad():
             for _, data in enumerate(loader):
@@ -234,7 +247,15 @@ class MonitorSRL(MonitorBase):
                 x_t = networks["encoder"]["model"].forward(x_t, None)
                 x_tt = networks["encoder"]["model"].forward(x_tt, None)
 
-                loss_gt_model, predicted_gt_x_t = calculate_gt_model(networks, x_t, gt_x_t)
+                if self.hparams.vision_params.project_direct_to_gt:
+                    loss_gt_model = (RMSELoss()(x_t, gt_x_t) + RMSELoss()(x_tt, gt_x_tt))
+                    predicted_gt_x_t = x_t
+                else:
+                    loss_gt_model, predicted_gt_x_t = calculate_gt_model(networks, x_t, gt_x_t)
+                    loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
+                    loss_gt_model = loss_gt_model + loss_gtt_model
+
+                loss_gt_model = loss_gt_model / 2.
                 losses_gt_model += loss_gt_model
 
                 loss_forward_model, _ = calculate_forward_model(networks, x_t, a_t, x_tt)
@@ -257,12 +278,22 @@ class MonitorSRL(MonitorBase):
                 loss = loss_priors + loss_forward_model + loss_inverse_model + loss_gt_model
                 losses += loss
 
-                states += (predicted_gt_x_t.mean(0))
                 latent_states += (x_t.mean(0))
+                states += (predicted_gt_x_t.mean(0))
+                states_diff += (gt_x_t - predicted_gt_x_t).mean(0)
+                states_error += torch.abs(gt_x_t - predicted_gt_x_t).mean(0)
 
         states = states / num_batches
+        states_diff = states_diff / num_batches
+        states_error = states_error / num_batches
         latent_states = latent_states / num_batches
+        with np.errstate(divide="ignore"):
+            states_relative_error = states_error.detach().cpu().numpy() / srl_collector.ranges[task_id]['real_state']
+        states_relative_error[states_relative_error == np.inf] = 0
         self.writer.add_histogram(f'eval_states/{task_id}', states, self.train_iter)
+        self.writer.add_histogram(f'eval_states_diff/{task_id}', states_diff, self.train_iter)
+        self.writer.add_histogram(f'eval_states_error_absolute/{task_id}', states_error, self.train_iter)
+        self.writer.add_histogram(f'eval_states_error_relative/{task_id}', states_relative_error, self.train_iter)
         self.writer.add_histogram(f'eval_latent_states/{task_id}', latent_states, self.train_iter)
 
         # actions = torch.cat(actions)

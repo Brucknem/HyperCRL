@@ -581,16 +581,13 @@ def collect_random_data(task_id, env, hparams, collector, rand_pi, srl_collector
     is_vision_based = hasattr(hparams, "vision_params")
 
     feature_extractor = StaticFeatureExtractor() if is_vision_based else None
+    feature_extractor.to(hparams.gpuid)
 
     x_t = env.reset()
-    x_t, x_t_img = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
+    x_t, x_t_features = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
     for it in range(hparams.init_rand_steps):
         if it % 100 == 0:
             print(f"Random Step: {it} / {hparams.init_rand_steps}")
-
-        if is_vision_based and hparams.vision_params.save_every > 0 and it % hparams.vision_params.save_every == 0:
-            print(f'Saving...')
-            srl_collector.save()
 
         if is_vision_based and not srl_collector.empty(
                 task_id) and np.random.random() < hparams.vision_params.sample_known_action_prob:
@@ -598,26 +595,25 @@ def collect_random_data(task_id, env, hparams, collector, rand_pi, srl_collector
         else:
             u = rand_pi.act(x_t)
         x_tt, reward, done, _ = env.step(u.reshape(env.action_space.shape))
-        x_tt, x_tt_img = get_image_obs(x_tt, hparams, reward, feature_extractor=feature_extractor)
+        x_tt, x_tt_features = get_image_obs(x_tt, hparams, reward, feature_extractor=feature_extractor)
 
         if is_vision_based:
-            srl_collector.add(task_id, x_t_img, u, x_tt_img, reward, x_t, x_tt)
+            srl_collector.add(task_id, x_t_features, u, x_tt_features, reward, x_t, x_tt)
         else:
             collector.add(x_t, u, x_tt, task_id)
 
         x_t = x_tt
-        x_t_img = x_tt_img
+        x_t_features = x_tt_features
 
         if done:
             x_t = env.reset()
-            x_t, x_t_img = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
+            x_t, x_t_features = get_image_obs(x_t, hparams, feature_extractor=feature_extractor)
 
     if is_vision_based and hparams.vision_params.save_every > 0:
         print(f'Saving...')
         srl_collector.save()
         if hparams.vision_params.exit_after_save:
             print('Finished collecting data.')
-            sys.exit(0)
 
 
 def chunked_hnet(env, seed=None, savepath=None, play=False):

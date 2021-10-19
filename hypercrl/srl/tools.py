@@ -91,8 +91,9 @@ def generate_srl_networks(hparams, action_space):
         hparams.state_dim if not hparams.vision_params.project_direct_to_gt else hparams.numerical_state_dim,
         hparams.vision_params.encoder_model.h_dims,
         use_batch_norm=hparams.vision_params.encoder_model.bn,
+        dropout_rate=hparams.vision_params.encoder_model.dropout,
     )
-    encoder = ResNet18Encoder(mlp, hparams.vision_params)
+    encoder = mlp  # ResNet18Encoder(mlp, hparams.vision_params)
     encoder.to(gpuid)
     encoder.train()
     networks["encoder"] = {'model': encoder, 'params': encoder.parameters(),
@@ -240,8 +241,8 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
 
         for i, data in enumerate(train_loader):
             with timeit_context(total_time_iter):
-                if it % 20 == 0:
-                    print(f'Iteration: {it} / {hparams.vision_params.train_vision_iters}')
+                #  if it % 200 == 0:
+                #     print(f'Iteration: {it} / {hparams.vision_params.train_vision_iters}')
 
                 optimizer.zero_grad()
                 idx, x_t, a_t, x_tt, rewards, gt_x_t, gt_x_tt = [x.to(gpuid) for x in data]
@@ -250,9 +251,12 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
                 x_tt = networks["encoder"]["model"].forward(x_tt, mnet_weights)
 
                 if hparams.vision_params.project_direct_to_gt:
-                    loss_gt_model = RMSELoss()(x_t, gt_x_t)
+                    loss_gt_model = (RMSELoss()(x_t, gt_x_t) + RMSELoss()(x_tt, gt_x_tt))
                 else:
                     loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t)
+                    loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
+                    loss_gt_model = loss_gt_model + loss_gtt_model
+                loss_gt_model = loss_gt_model / 2.
                 loss_forward_model, _ = calculate_forward_model(networks, x_t, a_t, x_tt)
                 loss_inverse_model, _, _ = calculate_inverse_model(networks, x_t, a_t, x_tt)
                 loss_priors, loss_slowness, loss_variability, loss_proportionality, loss_repeatability, loss_causality \

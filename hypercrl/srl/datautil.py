@@ -16,7 +16,16 @@ import pandas as pd
 from hypercrl.srl.utils import sample_by_size, remove_and_move, probabilities_by_size, convert_to_array
 
 
+def shorten_array(arr):
+    if len(arr) <= 3:
+        return str(arr)
+    else:
+        return f'[{arr[0]}, {arr[1]}, ...]'
+
+
 class DataPoint:
+    features_in_datapoint = ['features', 'action', 'next_features', 'reward', 'real_state', 'next_real_state']
+
     def __init__(self, features, action, next_features, reward, real_state=None, next_real_state=None):
         self.features = features
         self.action = action
@@ -24,6 +33,25 @@ class DataPoint:
         self.reward = reward
         self.real_state = real_state
         self.next_real_state = next_real_state
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __add__(self, other):
+        if other == 0:
+            return self
+
+        if not isinstance(other, DataPoint):
+            raise f"{other} is not a datapoint."
+
+        return DataPoint(
+            self.features + other.features,
+            self.action + other.action,
+            self.next_features + other.next_features,
+            self.reward + other.reward,
+            self.real_state + other.real_state,
+            self.next_real_state + other.next_real_state,
+        )
 
     def __eq__(self, other):
         return isinstance(other, DataPoint) and \
@@ -35,12 +63,12 @@ class DataPoint:
                np.array_equal(self.next_real_state, other.next_real_state, equal_nan=True)
 
     def __str__(self):
-        return f'features: {np.linalg.norm(self.features):.4f}, ' \
-               f'action: {np.linalg.norm(self.action):.4f}, ' \
-               f'next_features: {np.linalg.norm(self.next_features):.4f}, ' \
+        return f'features: {shorten_array(self.features):.4f}, ' \
+               f'action: {shorten_array(self.action):.4f}, ' \
+               f'next_features: {shorten_array(self.next_features):.4f}, ' \
                f'reward: {self.reward:.4f}, ' \
-               f'real_state: {np.linalg.norm(self.real_state):.4f}, ' \
-               f'next_real_state: {np.linalg.norm(self.next_real_state):.4f}, '
+               f'real_state: {shorten_array(self.real_state):.4f}, ' \
+               f'next_real_state: {shorten_array(self.next_real_state):.4f}, '
 
     def __getitem__(self, item):
         if item == 0 or item == 'features':
@@ -80,6 +108,16 @@ class DataCollector:
         self.load_suffix = hparams.vision_params.load_suffix
 
         self.hparams = hparams
+
+        self.mins = {}
+        self.maxs = {}
+        self.ranges = {}
+
+    def calculate_statistics(self, task_id):
+        values = {x: self.get_values(task_id, x) for x in DataPoint.features_in_datapoint}
+        self.mins[task_id] = {x: np.amin(value, axis=0) for x, value in values.items()}
+        self.maxs[task_id] = {x: np.amax(value, axis=0) for x, value in values.items()}
+        self.ranges[task_id] = {x: self.maxs[task_id][x] - self.mins[task_id][x] for x in values.keys()}
 
     def num_tasks(self):
         return len(self.data_points)
@@ -181,23 +219,15 @@ class DataCollector:
         states, actions are normalized to N(0, 1)
         """
 
-        indices = torch.IntTensor(list(range(len(self.images[task_id]))))
-        images = torch.FloatTensor(np.hstack(self.images[task_id])).reshape(self.image_dims)
-        nexts = torch.FloatTensor(np.hstack(self.nexts[task_id])).reshape(self.image_dims)
-        actions = torch.FloatTensor(np.hstack(self.actions[task_id])).T
-        rewards = torch.FloatTensor(np.hstack(self.rewards[task_id])).T
-        gt_x_t = torch.FloatTensor(np.hstack(self.gt_state[task_id])).T
-        gt_x_tt = torch.FloatTensor(np.hstack(self.gt_nexts[task_id])).T
+        values = [self.get_values(task_id, x) for x in DataPoint.features_in_datapoint]
+        values = [torch.FloatTensor(value) for value in values]
+        values = [torch.IntTensor(list(range(len(self.data_points[task_id]))))] + values
 
-        train_inds = self.train_inds[task_id]
-        val_inds = self.val_inds[task_id]
+        train_inds = self.get_train_inds(task_id)
+        val_inds = self.get_val_inds(task_id)
 
-        if ds_range == "second_half":
-            train_inds = train_inds[len(train_inds) // 2:]
-        train_set = TensorDataset(indices[train_inds], images[train_inds], actions[train_inds], nexts[train_inds],
-                                  rewards[train_inds], gt_x_t[train_inds], gt_x_tt[train_inds])
-        val_set = TensorDataset(indices[val_inds], images[val_inds], actions[val_inds], nexts[val_inds],
-                                rewards[val_inds], gt_x_t[val_inds], gt_x_tt[val_inds])
+        train_set = TensorDataset(*([value[train_inds] for value in values]))
+        val_set = TensorDataset(*([value[val_inds] for value in values]))
 
         return train_set, val_set
 
@@ -337,6 +367,7 @@ class DataCollector:
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
         for task_id in [x.name for x in load_path_base.iterdir() if x.is_dir()]:
             self.load_task(int(task_id))
+            self.calculate_statistics(int(task_id))
 
     def load_task(self, task_id):
         self.clear(task_id)
@@ -359,7 +390,7 @@ class DataCollector:
             self.add(task_id, *datapoint)
             self.train_inds[task_id][-1] = values[6][i]
 
-        assert self.check_same_actions_really_same(task_id)
+        # assert self.check_same_actions_really_same(task_id)
 
     def __eq__(self, other):
         if not isinstance(other, DataCollector):

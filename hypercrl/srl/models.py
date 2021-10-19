@@ -163,6 +163,7 @@ class StaticFeatureExtractor(nn.Module):
         ])
         self.feature_extractor = torchvision.models.resnet18(pretrained=True)
         self.feature_extractor.fc = torch.nn.Identity()
+        self.device = 'cpu'
 
     def forward(self, x):
         if x is None:
@@ -170,7 +171,15 @@ class StaticFeatureExtractor(nn.Module):
 
         with torch.no_grad():
             x = self.transform(x)
+            if x.device != self.device:
+                x = x.to(self.device)
+
             if len(x.shape) == 3:
                 x = x.unsqueeze(dim=0)
             x = self.feature_extractor(x)
             return x
+
+    def to(self, device):
+        self.feature_extractor.to(device)
+        self.device = device
+        return self

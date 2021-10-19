@@ -28,7 +28,13 @@ def run(hparams):
 
 
 if __name__ == "__main__":
-    hparams = HP(env="door_pose", robot="Panda", seed=777, resume=False, save_folder="")
-    hparams.model = "single"
-    add_vision_params(hparams, "gt")
-    run(hparams)
+    for x in [100000, 1_000_000]:
+        for y in [1, 2, 5]:
+            size = x * y
+            hparams = HP(env="door_pose", robot="Panda", seed=777, resume=False, save_folder=f"{size}")
+            hparams.model = "single"
+            hparams.num_tasks = 1
+            add_vision_params(hparams, "gt")
+            hparams.vision_params.save_path += f'/{size}'
+            hparams.init_rand_steps = size
+            run(hparams)
