@@ -116,7 +116,7 @@ class Hparams():
 
         return hparams
 
-    def to_dict(self):
+    def to_dict(self, float_precision=15):
         result = {}
 
         for key, val in self.__dict__.items():
@@ -126,14 +126,17 @@ class Hparams():
                     result[full_key] = inner_val
                 continue
 
-            result[key] = str(val)
+            value = val
+            if isinstance(value, float):
+                value = f'{round(value, float_precision)}'
+            result[key] = str(value)
 
         return result
 
     def to_filename(self):
         result = ""
 
-        for key, val in self.to_dict().items():
+        for key, val in self.to_dict(float_precision=5).items():
             result += f'{key}:{val}+'
 
         result = result[:-1]

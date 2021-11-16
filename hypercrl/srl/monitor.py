@@ -16,6 +16,20 @@ from hypercrl.tools import MonitorBase
 
 
 class MonitorSRL(MonitorBase):
+    states_names = [
+        "dist [x]", "dist [y]", "dist [z]",
+        "handle_q_eef [x]", "handle_q_eef [y]", "handle_q_eef [z]", "handle_q_eef [w]",
+        "gripper",
+        "joint_pos [0]", "joint_pos [1]", "joint_pos [2]", "joint_pos [3]", "joint_pos [4]", "joint_pos [5]",
+        "joint_pos [6]",
+        "joint_vel [0]", "joint_vel [1]", "joint_vel [2]", "joint_vel [3]", "joint_vel [4]", "joint_vel [5]",
+        "joint_vel [6]",
+        "door_v",
+        "knob_v",
+        "door",
+        "knob",
+    ]
+
     def __init__(self, hparams, networks, collector, btest):
         super(MonitorSRL, self).__init__(hparams, networks["encoder"]["model"], collector, btest)
         self.eval_every = hparams.vision_params.eval_every
@@ -56,6 +70,7 @@ class MonitorSRL(MonitorBase):
         x_tt = networks["encoder"]["model"].forward(x_tt, None)
 
         save_path = Path(save_folder)
+        save_path.mkdir(exist_ok=True, parents=True)
         make_dot(x_t, params=(dict(list(networks["encoder"]["model"].named_parameters())))).render(
             save_path / "encoder", format="png")
 
@@ -181,12 +196,15 @@ class MonitorSRL(MonitorBase):
                 continue
             self.writer.add_histogram(f'{model_name}_weight/{i - skipped}_{name}', weight.flatten(), self.train_iter)
             self.writer.add_histogram(f'{model_name}_grad/{i - skipped}_{name}', weight.grad.flatten(), self.train_iter)
-            self.writer.add_scalar(f'{model_name}/grad/{i - skipped}_{name}', float(weight.grad.norm()),
-                                   self.train_iter)
+            self.writer.add_scalar(f'{model_name}/grad_norm/{i - skipped}_{name}',
+                                   torch.linalg.norm(weight.grad, ord=1), self.train_iter)
 
     def validate(self, networks, srl_collector):
         if (self.train_iter % self.eval_every) == 0:
             num_tasks = self.collector.num_tasks()
+
+            for model_misc in networks.values():
+                model_misc["model"].eval()
 
             for i in range(num_tasks):
                 is_training = (i == (num_tasks - 1))
@@ -214,6 +232,9 @@ class MonitorSRL(MonitorBase):
 
             # Other Sfuff
             # self.btest.plot()
+
+            for model_misc in networks.values():
+                model_misc["model"].train()
 
     def validate_task(self, task_id, networks, srl_collector, is_training=False):
         gpuid = self.hparams.gpuid
@@ -289,7 +310,13 @@ class MonitorSRL(MonitorBase):
         self.writer.add_histogram(f'eval_states/{task_id}', states, self.train_iter)
         self.writer.add_histogram(f'eval_states_diff/{task_id}', states_diff, self.train_iter)
         self.writer.add_histogram(f'eval_states_error_absolute/{task_id}', states_error, self.train_iter)
+
+        for i, (value, name) in enumerate(zip(list(states_error), MonitorSRL.states_names)):
+            self.writer.add_scalar(f'eval_states_error_absolute_/{task_id}/{i}_{name}', value, self.train_iter)
         self.writer.add_histogram(f'eval_states_error_relative/{task_id}', states_relative_error, self.train_iter)
+        for i, (value, name) in enumerate(zip(list(states_relative_error), MonitorSRL.states_names)):
+            self.writer.add_scalar(f'eval_states_error_relative_/{task_id}/{i}_{name}', value, self.train_iter)
+
         self.writer.add_histogram(f'eval_latent_states/{task_id}', latent_states, self.train_iter)
 
         # actions = torch.cat(actions)
@@ -322,7 +349,7 @@ class MonitorSRL(MonitorBase):
                         losses_proportionality / num_batches,
                         losses_repeatability / num_batches,
                         losses_causality / num_batches,
-                        loss_gt_model,
+                        losses_gt_model,
                         losses_forward_model,
                         losses_inverse_model,
                         train=False)

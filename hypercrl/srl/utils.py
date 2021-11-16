@@ -1,6 +1,19 @@
+import time
+from contextlib import contextmanager
+
 import cv2
 import numpy as np
 import torch
+
+
+@contextmanager
+def timeit_context(arr, name=""):
+    start_time = time.time()
+    yield
+    elapsed_time = time.time() - start_time
+    if name:
+        print(f'{name}: {elapsed_time}')
+    arr.append(elapsed_time)
 
 
 def convert_to_array(x):

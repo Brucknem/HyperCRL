@@ -15,7 +15,7 @@ from hypercrl.srl.robotic_priors import RoboticPriors, SlownessPrior, CausalityP
     ReferencePointPrior, VariabilityPrior, ProportionalityPrior
 from torch.utils.data import DataLoader
 
-from hypercrl.srl.utils import scale_to_action_space
+from hypercrl.srl.utils import scale_to_action_space, timeit_context
 from hypercrl.tools import reset_seed, str_to_act
 from hypercrl.tools import MonitorHnet, HP, Hparams
 from hypercrl.control import RandomAgent, MPC
@@ -31,19 +31,7 @@ from hypercrl.hypercl.utils import ewc_regularizer as ewc
 from hypercrl.hypercl.utils import si_regularizer as si
 from hypercrl.hypercl.utils import optim_step as opstep
 from hypercrl.srl.models import ResNet18Encoder
-
-from contextlib import contextmanager
-from contextlib import contextmanager
-
-
-@contextmanager
-def timeit_context(arr, name=""):
-    start_time = time.time()
-    yield
-    elapsed_time = time.time() - start_time
-    if name:
-        print(f'{name}: {elapsed_time}')
-    arr.append(elapsed_time)
+from hypercrl.srl.models import MyMLP
 
 
 def build_vision_model_hnet(hparams):
@@ -86,13 +74,24 @@ def generate_srl_networks(hparams, action_space):
     gpuid = hparams.gpuid
     networks = {}
 
-    mlp = MLP(
+    # mlp = MLP(
+    #     hparams.vision_params.in_dim,
+    #     hparams.state_dim,
+    #     hparams.vision_params.encoder_model.h_dims,
+    #     use_batch_norm=hparams.vision_params.encoder_model.bn,
+    #     dropout_rate=hparams.vision_params.encoder_model.dropout,
+    #     activation_fn=torch.nn.LeakyReLU()
+    # )
+
+    mlp = MyMLP(
         hparams.vision_params.in_dim,
         hparams.state_dim,
         hparams.vision_params.encoder_model.h_dims,
         use_batch_norm=hparams.vision_params.encoder_model.bn,
-        dropout_rate=hparams.vision_params.encoder_model.dropout,
+        dropout=hparams.vision_params.encoder_model.dropout,
+        act_fn=torch.nn.LeakyReLU()
     )
+
     encoder = mlp  # ResNet18Encoder(mlp, hparams.vision_params)
     encoder.to(gpuid)
     encoder.train()
@@ -107,29 +106,29 @@ def generate_srl_networks(hparams, action_space):
     if hparams.vision_params.add_sin_cos_to_state:
         latent_dim *= 3
 
-    gt_model = MLP(latent_dim,
-                   hparams.numerical_state_dim,
-                   hparams.vision_params.gt_model.h_dims,
-                   use_batch_norm=False,
-                   )
+    gt_model = MyMLP(latent_dim,
+                     hparams.numerical_state_dim,
+                     hparams.vision_params.gt_model.h_dims,
+                     use_batch_norm=False,
+                     )
     gt_model.to(gpuid)
     gt_model.train()
     networks["gt"] = {'model': gt_model, 'params': gt_model.parameters(),
                       'lr': hparams.vision_params.gt_model.lr,
-                      'loss': RMSELoss(),
+                      'loss': hparams.vision_params.gt_model.loss_fn,
                       'reg_str': hparams.vision_params.gt_model.reg_str
                       }
 
     if hparams.vision_params.use_forward_model:
         forward_model = MLP(latent_dim + hparams.control_dim,
                             hparams.state_dim,
-                            hparams.vision_params.forward_model_dims,
-                            use_batch_norm=True,
+                            hparams.vision_params.forward_model.h_dims,
+                            use_batch_norm=hparams.vision_params.forward_model.bn,
                             )
         forward_model.to(gpuid)
         forward_model.train()
         networks["forward"] = {'model': forward_model, 'params': forward_model.parameters(),
-                               'lr': hparams.vision_params.forward_model_lr,
+                               'lr': hparams.vision_params.forward_model.lr,
                                'loss': RMSELoss(),
                                'reg_str': hparams.vision_params.forward_model.reg_str
                                }
@@ -137,15 +136,15 @@ def generate_srl_networks(hparams, action_space):
     if hparams.vision_params.use_inverse_model:
         inverse_model = MLP(2 * latent_dim,
                             hparams.control_dim,
-                            hparams.vision_params.inverse_model_dims,
-                            use_batch_norm=True,
+                            hparams.vision_params.inverse_model.h_dims,
+                            use_batch_norm=hparams.vision_params.inverse_model.bn,
                             out_fn=scale_to_action_space(action_space, gpuid, activation='tanh')
                             )
         inverse_model.to(gpuid)
         inverse_model.train()
 
         networks["inverse"] = {'model': inverse_model, 'params': inverse_model.parameters(),
-                               'lr': hparams.vision_params.inverse_model_lr,
+                               'lr': hparams.vision_params.inverse_model.lr,
                                'loss': RMSELoss(),
                                'reg_str': hparams.vision_params.inverse_model.reg_str
                                }
@@ -157,7 +156,7 @@ def generate_optimizer(networks):
     return torch.optim.Adam([net for net in networks.values()])
 
 
-def calculate_gt_model(networks, x_t, gt_x_tt):
+def calculate_gt_model(networks, x_t, gt_x_tt, detach=False):
     if "gt" not in networks:
         return 0, None
 
@@ -166,7 +165,15 @@ def calculate_gt_model(networks, x_t, gt_x_tt):
     gt_misc = networks["gt"]
 
     with timeit_context(gt_misc["times"]):
+        if detach:
+            x_t = x_t.detach()
         predicted_gt_x_t = gt_misc["model"](x_t)
+        front = predicted_gt_x_t[:, :3]
+        quat = predicted_gt_x_t[:, 3:7]
+        back = predicted_gt_x_t[:, 7:]
+        quat = quat / torch.linalg.norm(quat, dim=1).unsqueeze(1)
+        predicted_gt_x_t = torch.hstack([front, quat, back])
+
         return gt_misc["loss"](gt_x_tt, predicted_gt_x_t), predicted_gt_x_t
 
 
@@ -209,7 +216,12 @@ def calculate_regularization(networks, model):
     if networks[model]["reg_str"] == 0:
         return 0
 
-    return networks[model]["reg_str"] * sum([torch.sum(torch.sum(torch.abs(s))) for s in (networks[model]["params"])])
+    if isinstance(networks["gt"]["loss"], torch.nn.L1Loss):
+        return networks[model]["reg_str"] * sum(
+            [torch.sum(torch.sum(torch.abs(s))) for s in networks[model]["model"].parameters()])
+
+    return networks[model]["reg_str"] * sum(
+        [torch.sum(torch.sum(torch.abs(s) ** 2)) for s in networks[model]["model"].parameters()])
 
 
 def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hparams, train_it):
@@ -249,8 +261,10 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
                 x_t = networks["encoder"]["model"].forward(x_t, mnet_weights)
                 x_tt = networks["encoder"]["model"].forward(x_tt, mnet_weights)
 
-                loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t)
-                loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt)
+                loss_gt_model, _ = calculate_gt_model(networks, x_t, gt_x_t,
+                                                      not hparams.vision_params.train_on_gt_model)
+                loss_gtt_model, _ = calculate_gt_model(networks, x_tt, gt_x_tt,
+                                                       not hparams.vision_params.train_on_gt_model)
                 loss_gt_model = loss_gt_model + loss_gtt_model
                 loss_gt_model = loss_gt_model / 2.
 
@@ -265,14 +279,16 @@ def train(task_id, networks, optimizer, logger, train_loader, srl_collector, hpa
                     # loss_gt_model = loss_gt_model + calculate_regularization(networks, "gt")
                     # loss_inverse_model = loss_inverse_model + calculate_regularization(networks, "inverse")
                     # loss_forward_model = loss_forward_model + calculate_regularization(networks, "forward")
-                    # loss_encoder_model = calculate_regularization(networks, "encoder")
 
-                    loss_task = loss_priors + loss_forward_model + loss_inverse_model
+                    loss_task = loss_priors + loss_forward_model + loss_inverse_model + \
+                                calculate_regularization(networks, "encoder") / (2 * len(x_t))
                     if hparams.vision_params.train_on_gt_model:
                         loss_task = loss_task + loss_gt_model
                     else:
                         loss_gt_model.backward()
                     loss_task.backward()
+                    torch.nn.utils.clip_grad_norm_(networks["encoder"]["model"].parameters(), 5)
+
                     optimizer.step()
 
                 logger.train_vision_step(loss_task, loss_priors, loss_slowness, loss_variability, loss_proportionality,
@@ -314,10 +330,12 @@ def calculate_priors(networks, gpuid, hparams, idx, srl_collector, task_id, x_t,
 
         loss_slowness = slowness_prior(x_t, x_tt)
         loss_priors += loss_slowness
+        # MASTER_THESIS Lookup how to calculate the priors correctly
         loss_variability = variability_prior(x_t, x_tt[torch.randperm(x_tt.size()[0])])
+        # loss_variability = variability_prior(x_t, x_tt)
         loss_priors += loss_variability
 
-        if hparams.vision_params.use_fast_priors:
+        if hparams.vision_params.use_only_fast_priors:
             return loss_priors, loss_slowness, loss_variability, 0, 0, 0
 
         states = []
@@ -326,36 +344,40 @@ def calculate_priors(networks, gpuid, hparams, idx, srl_collector, task_id, x_t,
         other_states = []
         next_other_states = []
         other_rewards = []
-        with timeit_context([]):  # , "Get same actions"):
+        with timeit_context([]):
             for index, id in enumerate(idx):
                 # MASTER_THESIS Pick only single other same action to have same batch size
-                other_x_t, other_x_tt, other_r = srl_collector.get_same_actions(task_id, id, train=True)
-                num_other = len(other_x_t)
+                other_dp = srl_collector.get_same_actions(task_id, id)
+                num_other = len(other_dp)
                 if num_other <= 0:
                     continue
                 states = states + [x_t[index].unsqueeze(dim=0)] * num_other
                 next_states = next_states + [x_tt[index].unsqueeze(dim=0)] * num_other
                 rewards = rewards + [r[index].unsqueeze(dim=0)] * num_other
-                other_states = other_states + [torch.from_numpy(other_x_t)]
-                next_other_states = next_other_states + [torch.from_numpy(other_x_tt)]
-                other_rewards = other_rewards + [torch.from_numpy(other_r)]
+                other_states = other_states + [x.features for x in other_dp]
+                next_other_states = next_other_states + [x.next_features for x in other_dp]
+                other_rewards = other_rewards + [x.reward for x in other_dp]
 
         if not states:
             return loss_priors, loss_slowness, loss_variability, 0, 0, 0
 
-        with timeit_context([]):  # , "Calculate slow priors"):
-            sample_indices = np.random.choice(len(states), size=len(x_t))
+        with timeit_context([]):
+            sample_indices = np.random.choice(len(states), size=len(x_t), replace=len(states) < len(x_t))
+            states, next_states, rewards = [torch.cat(x) for x in [states, next_states, rewards]]
+            other_states, other_rewards, next_other_states = [torch.Tensor(x) for x in
+                                                              [other_states, other_rewards, next_other_states]]
+
             states, next_states, other_states, next_other_states, rewards, other_rewards = \
-                [torch.cat(x)[sample_indices].to(gpuid) for x in
+                [x[sample_indices].to(gpuid) for x in
                  [states, next_states, other_states, next_other_states, rewards, other_rewards]]
 
-            other_states = networks["encoder"]["model"].forward(other_states, None)
-            next_other_states = networks["encoder"]["model"].forward(next_other_states, None)
+            other_states = networks["encoder"]["model"].forward(other_states)
+            next_other_states = networks["encoder"]["model"].forward(next_other_states)
 
             loss_proportionality = proportionality_prior(states, next_states, other_states, next_other_states)
             loss_repeatability = repeatability_prior(states, next_states, other_states, next_other_states)
-            loss_causality = causality_prior(states, next_states, rewards, other_rewards)
-            # loss_causality = 0
+            # loss_causality = causality_prior(states, next_states, rewards, other_rewards)
+            loss_causality = 0
 
             loss_priors += loss_proportionality
             loss_priors += loss_repeatability

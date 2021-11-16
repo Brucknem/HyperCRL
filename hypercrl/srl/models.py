@@ -183,3 +183,56 @@ class StaticFeatureExtractor(nn.Module):
         self.feature_extractor.to(device)
         self.device = device
         return self
+
+
+class MyMLP(nn.Module):
+    def __init__(self, in_dims, out_dims, h_dims, hidden_layers=1, use_batch_norm=True, dropout=-1.,
+                 act_fn=nn.LeakyReLU()):
+        super().__init__()
+
+        if isinstance(h_dims, int):
+            h_dims = [h_dims] * hidden_layers
+
+        dims = [in_dims, *h_dims, out_dims]
+
+        self.bn = nn.ModuleList([nn.BatchNorm1d(dims[i]) for i in range(1, len(dims) - 1)]) if use_batch_norm else None
+        self.linear = nn.ModuleList([nn.Linear(dims[i], dims[i + 1]) for i in range(len(dims) - 1)])
+        self.dropout = nn.Dropout(dropout) if 0 <= dropout < 1 else None
+        self.act_fn = act_fn
+
+        self.weight_names = list(dict(self.named_parameters()).keys())
+
+    def forward(self, x, weights=None):
+        for i, layer in enumerate(self.linear):
+            x = layer(x)
+            x = self.act_fn(x)
+
+            if i != len(self.linear) - 1:
+                if self.bn is not None:
+                    x = self.bn[i](x)
+
+                if self.dropout is not None:
+                    x = self.dropout(x)
+
+        return x
+
+
+if __name__ == "__main__":
+    x = torch.ones((10, 7))
+    print(x)
+
+    mlp = MyMLP(7, 2, 100, 2, use_batch_norm=True, dropout=0.5)
+    print(mlp)
+    mlp.eval()
+    result = mlp(x)
+
+    print(result)
+
+    params = list(mlp.parameters())
+    named_params = dict(mlp.named_parameters())
+    # print(params)
+    for name, param in mlp.named_parameters():
+        if param.requires_grad:
+            print(name)
+
+    print("Yeet")

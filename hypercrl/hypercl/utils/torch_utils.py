@@ -27,7 +27,8 @@ import math
 import torch
 from torch import nn
 
-def init_params(weights, bias=None):
+
+def init_params(weights, bias=None, mode='fan_in', nonlinearity='leaky_relu'):
     """Initialize the weights and biases of a linear or (transpose) conv layer.
 
     Note, the implementation is based on the method "reset_parameters()",
@@ -42,11 +43,17 @@ def init_params(weights, bias=None):
         weights: The weight tensor to be initialized.
         bias (optional): The bias tensor to be initialized.
     """
-    nn.init.kaiming_uniform_(weights, a=math.sqrt(5))
+    if isinstance(nonlinearity, nn.ReLU):
+        nonlinearity = 'relu'
+    if isinstance(nonlinearity, nn.LeakyReLU):
+        nonlinearity = 'leaky_relu'
+
+    nn.init.kaiming_uniform_(weights, a=math.sqrt(5), mode=mode, nonlinearity=nonlinearity)
     if bias is not None:
         fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weights)
         bound = 1 / math.sqrt(fan_in)
         nn.init.uniform_(bias, -bound, bound)
+
 
 def get_optimizer(params, lr, momentum=0, weight_decay=0, use_adam=False,
                   adam_beta1=0.9, use_rmsprop=False, use_adadelta=False,
@@ -90,7 +97,6 @@ def get_optimizer(params, lr, momentum=0, weight_decay=0, use_adam=False,
 
     return optimizer
 
+
 if __name__ == '__main__':
     pass
-
-

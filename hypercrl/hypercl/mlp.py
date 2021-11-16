@@ -380,9 +380,9 @@ hyper_shapes_distilled` and the current statistics will be returned by the
             for i in range(len(self._layer_weight_tensors)):
                 if use_bias:
                     init_params(self._layer_weight_tensors[i],
-                                self._layer_bias_vectors[i])
+                                self._layer_bias_vectors[i], nonlinearity=self._a_fun)
                 else:
-                    init_params(self._layer_weight_tensors[i])
+                    init_params(self._layer_weight_tensors[i], nonlinearity=self._a_fun)
 
         self._is_properly_setup()
 

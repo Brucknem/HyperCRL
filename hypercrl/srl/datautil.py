@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -9,6 +10,7 @@ from torch.utils.data import TensorDataset
 import hypercrl.dataset.datautil
 from hypercrl.hypercl import HyperNetwork
 from hypercrl.srl import ResNet18EncoderHnet
+from hypercrl.srl.utils import timeit_context
 
 import pathlib
 import pandas as pd
@@ -20,7 +22,7 @@ def shorten_array(arr):
     if len(arr) <= 3:
         return str(arr)
     else:
-        return f'[{arr[0]}, {arr[1]}, ...]'
+        return f'[{arr[0]:.4f}, {arr[1]:.4f}, ...]'
 
 
 class DataPoint:
@@ -62,13 +64,13 @@ class DataPoint:
                np.array_equal(self.real_state, other.real_state, equal_nan=True) and \
                np.array_equal(self.next_real_state, other.next_real_state, equal_nan=True)
 
-    def __str__(self):
-        return f'features: {shorten_array(self.features):.4f}, ' \
-               f'action: {shorten_array(self.action):.4f}, ' \
-               f'next_features: {shorten_array(self.next_features):.4f}, ' \
+    def __repr__(self):
+        return f'features: {shorten_array(self.features)}, ' \
+               f'action: {shorten_array(self.action)}, ' \
+               f'next_features: {shorten_array(self.next_features)}, ' \
                f'reward: {self.reward:.4f}, ' \
-               f'real_state: {shorten_array(self.real_state):.4f}, ' \
-               f'next_real_state: {shorten_array(self.next_real_state):.4f}, '
+               f'real_state: {shorten_array(self.real_state)}, ' \
+               f'next_real_state: {shorten_array(self.next_real_state)}'
 
     def __getitem__(self, item):
         if item == 0 or item == 'features':
@@ -95,7 +97,14 @@ class DataCollector:
 
     def __init__(self, hparams):
         self.data_points = {}
+
         self.train_inds = {}
+        self.train_inds_updated = {}
+        self.train_inds_cache = {}
+        self.train_inds_cache_set = {}
+        self.val_inds_cache = {}
+        self.val_inds_cache_set = {}
+
         self.same_actions = {}
 
         self.max_capacity = hparams.vision_params.collector_max_capacity
@@ -137,6 +146,7 @@ class DataCollector:
         if task_id not in self.train_inds:
             self.train_inds[task_id] = []
         self.train_inds[task_id].append(np.random.rand() < 0.75)
+        self.train_inds_updated[task_id] = True
 
         ind = len(self.data_points[task_id]) - 1
 
@@ -149,11 +159,25 @@ class DataCollector:
 
         self.delete_on_max_capacity(task_id)
 
-    def get_train_inds(self, task_id):
-        return np.where(self.train_inds[task_id])[0]
+    def update_inds_cache(self, task_id):
+        if self.train_inds_updated[task_id]:
+            self.train_inds_cache[task_id] = np.where(self.train_inds[task_id])[0]
+            self.val_inds_cache[task_id] = np.where(~np.array(self.train_inds[task_id]))[0]
+            self.train_inds_cache_set[task_id] = set(self.train_inds_cache[task_id])
+            self.val_inds_cache_set[task_id] = set(self.val_inds_cache[task_id])
+            self.train_inds_updated[task_id] = False
 
-    def get_val_inds(self, task_id):
-        return np.where(~np.array(self.train_inds[task_id]))[0]
+    def get_train_inds(self, task_id, as_set=False):
+        self.update_inds_cache(task_id)
+        if as_set:
+            return self.train_inds_cache_set[task_id]
+        return self.train_inds_cache[task_id]
+
+    def get_val_inds(self, task_id, as_set=False):
+        self.update_inds_cache(task_id)
+        if as_set:
+            return self.val_inds_cache_set[task_id]
+        return self.val_inds_cache[task_id]
 
     def get_features(self, task_id, idx=-1):
         if idx >= 0:
@@ -203,6 +227,7 @@ class DataCollector:
 
             del self.train_inds[task_id][idx]
             del self.data_points[task_id][idx]
+            self.train_inds_updated[task_id] = True
 
             to_del = []
             for key in self.same_actions[task_id].keys():
@@ -241,28 +266,16 @@ class DataCollector:
 
         return train_set
 
-    def get_same_actions(self, task_id, idx, train=True):
-        indices = self.same_actions[task_id][tuple(self.actions[task_id][idx].squeeze())]
-        if train:
-            indices = [i for i in indices if i in self.train_inds[task_id]]
-        else:
-            indices = [i for i in indices if i in self.val_inds[task_id]]
+    def get_same_actions(self, task_id, idx):
+        train = self.train_inds[task_id][idx]
+        indices = self.get_train_inds(task_id, True) if train else self.get_val_inds(task_id, True)
+        action = tuple(self.data_points[task_id][idx].action)
+        same_action_indices = list(set(self.same_actions[task_id][action]) & indices)
 
-        images = np.array([])
-        nexts = np.array([])
-        rewards = np.array([])
+        same_action_indices.remove(idx)
 
-        if idx in indices:
-            indices.remove(int(idx))
-
-        if indices:
-            indices = np.array(indices)
-            # indices = [np.random.choice(indices)]
-            images = np.array([self.images[task_id][i] for i in indices]).reshape(self.image_dims)
-            nexts = np.array([self.nexts[task_id][i] for i in indices]).reshape(self.image_dims)
-            rewards = np.array([self.rewards[task_id][i] for i in indices]).T
-
-        return images, nexts, rewards
+        data_points = [self.data_points[task_id][x] for x in same_action_indices]
+        return data_points
 
     def get_by_action(self, task_id, u):
         if isinstance(u, torch.Tensor):
@@ -333,12 +346,14 @@ class DataCollector:
                         self.same_actions[task_id][key] = []
                     self.same_actions[task_id][key] += list(np.array(value) + old_len)
                 self.check_same_actions_really_same(task_id)
+                self.train_inds_updated[task_id] = True
 
         for task_id in other.data_points:
             if self.empty(task_id):
                 self.data_points[task_id] = other.data_points[task_id]
                 self.train_inds[task_id] = other.train_inds[task_id]
                 self.same_actions[task_id] = other.same_actions[task_id]
+                self.train_inds_updated[task_id] = True
 
     def save(self):
         for task_id in self.data_points:
@@ -362,6 +377,7 @@ class DataCollector:
     def clear(self, task_id):
         self.data_points[task_id] = []
         self.train_inds[task_id] = []
+        self.train_inds_updated[task_id] = True
 
     def load(self):
         load_path_base = pathlib.Path(self.save_path).joinpath(self.load_suffix)
@@ -391,6 +407,23 @@ class DataCollector:
             self.train_inds[task_id][-1] = values[6][i]
 
         # assert self.check_same_actions_really_same(task_id)
+        self.train_inds_updated[task_id] = True
+        self.normalize(task_id)
+
+    def normalize(self, task_id):
+        features = self.get_values(task_id, 'features')
+        next_features = self.get_values(task_id, 'next_features')
+
+        features_mean = np.mean(features, axis=0)
+        next_features_mean = np.mean(next_features, axis=0)
+        features_std = np.std(features, axis=0)
+        next_features_std = np.std(next_features, axis=0)
+
+        for i in range(len(self.data_points[task_id])):
+            self.data_points[task_id][i].features = (self.data_points[task_id][
+                                                         i].features - features_mean) / features_std
+            self.data_points[task_id][i].next_features = (self.data_points[task_id][
+                                                              i].next_features - next_features_mean) / next_features_std
 
     def __eq__(self, other):
         if not isinstance(other, DataCollector):

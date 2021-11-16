@@ -16,42 +16,43 @@ from hypercrl.srl.default_arg import add_vision_params, default_vision_params_in
     default_vision_params_gt, default_vision_params_encoder
 from hypercrl.srl.models import ResNet18Encoder
 from hypercrl.srl.monitor import MonitorSRL
-from hypercrl.srl.tools import generate_srl_networks, generate_optimizer
+from hypercrl.srl.tools import generate_srl_networks, generate_optimizer, RMSELoss
 from hypercrl.tools import reset_seed
 
 import tensorboard
 
 
 def hparams_to_tensorboard_folder(hparams):
-    folder = f'{time.time()}#LDIM:{hparams.state_dim}'
-    folder = folder + "#ENCODER_" + hparams.vision_params.encoder_model.to_filename()
-    folder = folder + "#GT_" + hparams.vision_params.gt_model.to_filename()
-    folder = folder + "#FORWARD_" + hparams.vision_params.forward_model.to_filename() if hparams.vision_params.use_forward_model else folder
-    folder = folder + "#INVERSE_" + hparams.vision_params.inverse_model.to_filename() if hparams.vision_params.use_inverse_model else folder
+    folder = f'{time.time()}/LDIM:{hparams.state_dim}'
+    folder = folder + "/ENCODER_" + hparams.vision_params.encoder_model.to_filename()
+    folder = folder + "/GT_" + hparams.vision_params.gt_model.to_filename()
+    folder = folder + "/FORWARD_" + hparams.vision_params.forward_model.to_filename() if hparams.vision_params.use_forward_model else folder
+    folder = folder + "/INVERSE_" + hparams.vision_params.inverse_model.to_filename() if hparams.vision_params.use_inverse_model else folder
     folder = folder.replace(" ", "")
     return folder
 
 
-def train(hparams, use_bn: bool = False, dropout: float = -1, latent_dim: int = 512, encoder_h_dim: int = 4096,
-          encoder_depth: int = 1, lr_hyper: float = 5e-3, lr_forward: float = 1e-3, lr_inverse: float = 1e-3,
-          lr_gt: float = 1e-3):
+def extend_params_dict(params_dict, other, name):
+    for key, value in other.items():
+        value = str(value)
+        params_dict[f'{name}.{key}'] = value
+
+
+def train(hparams, latent_dim, encoder, forward, inverse, gt):
     # print(lr)
     reset_seed(hparams.seed)
 
     hparams.state_dim = latent_dim
-    hparams.vision_params.encoder_model = default_vision_params_encoder(hparams.vision_params, h_dims=encoder_h_dim,
-                                                                        depth=encoder_depth)
-    hparams.vision_params.gt_model = default_vision_params_gt(hparams.vision_params, latent_dim=latent_dim,
-                                                              depth=encoder_depth)
-    hparams.vision_params.forward_model = default_vision_params_forward(hparams.vision_params, latent_dim=latent_dim)
-    hparams.vision_params.inverse_model = default_vision_params_inverse(hparams.vision_params, latent_dim=latent_dim)
+    hparams.vision_params.encoder_model = default_vision_params_encoder(**encoder)
+    hparams.vision_params.gt_model = default_vision_params_gt(**gt)
+    hparams.vision_params.forward_model = default_vision_params_forward(**forward)
+    hparams.vision_params.inverse_model = default_vision_params_inverse(**inverse)
 
-    hparams.vision_params.encoder_model.lr = lr_hyper
-    hparams.vision_params.gt_model.lr = lr_gt
-    hparams.vision_params.inverse_model.lr = lr_inverse
-    hparams.vision_params.forward_model.lr = lr_forward
-    hparams.vision_params.encoder_model.bn = use_bn
-    hparams.vision_params.encoder_model.dropout = dropout
+    params_dict = {"latent_dim": int(latent_dim)}
+    extend_params_dict(params_dict, encoder, "encoder")
+    extend_params_dict(params_dict, forward, "forward")
+    extend_params_dict(params_dict, inverse, "inverse")
+    extend_params_dict(params_dict, gt, "gt")
 
     folder = hparams_to_tensorboard_folder(hparams)
     hparams.save_folder = Path(save_folder) / folder
@@ -66,13 +67,8 @@ def train(hparams, use_bn: bool = False, dropout: float = -1, latent_dim: int = 
     train_set, _ = srl_collector.get_dataset(task_id)
     train_loader = DataLoader(train_set, batch_size=hparams.vision_params.bs, shuffle=True, drop_last=True,
                               num_workers=hparams.num_ds_worker)
-    hypercrl.srl.tools.train(task_id, networks, optimizer, monitor_srl, train_loader, srl_collector, hparams, task_id)
 
-    params_dict = {"use_bn": bool(use_bn), "dropout": float(dropout), "latent_dim": int(latent_dim),
-                   "encoder_h_dim": int(encoder_h_dim),
-                   "encoder_depth": int(encoder_depth), "lr_hyper": float(lr_hyper), "lr_forward": float(lr_forward),
-                   "lr_inverse": float(lr_inverse),
-                   "lr_gt": float(lr_gt)}
+    hypercrl.srl.tools.train(task_id, networks, optimizer, monitor_srl, train_loader, srl_collector, hparams, task_id)
 
     for task_id, values in enumerate(monitor_srl.val_stats):
         metric_dict = {key: float(np.min(value)) for key, value in values.items() if key != "time"}
@@ -80,7 +76,7 @@ def train(hparams, use_bn: bool = False, dropout: float = -1, latent_dim: int = 
 
 
 if __name__ == "__main__":
-    save_folder = "./srl/door_pose/latent_to_gt/"
+    save_folder = "./srl/door_pose/latent_to_gt_with_normalization/"
     hparams = hypercrl.tools.default_arg.HP(env="door_pose", robot="Panda", seed=777, resume=False,
                                             save_folder=save_folder)
     hparams.model = "single"
@@ -95,31 +91,47 @@ if __name__ == "__main__":
     while True:
         threads = []
         for _ in range(8):
-            lr_hyper = 1e-3
-            lr_forward = 1e-3
-            lr_inverse = 1e-3
-            lr_gt = 1e-3
-            latent_dim = 2048
-
-            lr_hyper = np.random.uniform(1e-2, 1e-3)
-            encoder_h_dim = np.random.choice([4196, 8192])
-            use_bn = True  # np.random.random() < 0.5
-            encoder_depth = 1  # np.random.choice([1])
-            l = [-1, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-            dropout = -1  # np.random.choice(l, p=[0.5] + [0.5 / (len(l) - 1)] * (len(l) - 1))
+            l = [0.3, 0.5]
 
             latent_dim = np.random.choice([128, 256, 512])
+            # latent_dim = np.random.choice([512])
 
-            lr_gt = np.random.uniform(1e-2, 1e-3)
+            encoder = {
+                "lr": np.random.uniform(1e-2, 1e-3),
+                "h_dims": 512 * np.random.choice([1, 2]),
+                "bn": True,  # np.random.random() < 0.5,
+                "depth": np.random.choice([1, 2, 4, 8]),
+                "dropout": np.random.choice([-1, np.random.choice(l)]),
+                "reg_str": np.random.choice([0, np.random.uniform(1e-3, 1e-6)])
+            }
+
+            gt = {
+                "h_dims": latent_dim,  # np.random.choice([latent_dim, 512, 1024, 2048, 4196, 8192]),
+                "lr": np.random.uniform(1e-2, 1e-3),
+                "depth": 0,  # np.random.choice(range(2)),
+                "bn": False,  # np.random.random() < 0.5
+                "loss_fn": np.random.choice([torch.nn.L1Loss(), RMSELoss()])
+            }
+
+            forward = {
+                "h_dims": np.random.choice([latent_dim, 512, 1024, 2048]),
+                "lr": np.random.uniform(1e-2, 1e-3),
+                "depth": 1,  # np.random.choice(range(3)),
+                "bn": np.random.random() < 0.5
+            }
+
+            inverse = {
+                "h_dims": np.random.choice([latent_dim, 512, 1024, 2048]),
+                "lr": np.random.uniform(1e-2, 1e-3),
+                "depth": 1,  # np.random.choice(range(3)),
+                "bn": np.random.random() < 0.5
+            }
 
             if not threaded:
-                train(hparams, use_bn=use_bn, latent_dim=latent_dim, lr_hyper=lr_hyper, lr_forward=lr_forward,
-                      lr_inverse=lr_inverse, lr_gt=lr_gt, encoder_depth=encoder_depth, encoder_h_dim=encoder_h_dim,
-                      dropout=dropout)
+                train(hparams, latent_dim=latent_dim, encoder=encoder, forward=forward, inverse=inverse, gt=gt)
             else:
                 threads.append(Process(target=train, args=(
-                    hparams, use_bn, dropout, latent_dim, encoder_h_dim, encoder_depth, lr_hyper, lr_forward,
-                    lr_inverse, lr_gt)))
+                    hparams, latent_dim, encoder, forward, inverse, gt)))
             # time.sleep(2)
 
         for thread in threads:

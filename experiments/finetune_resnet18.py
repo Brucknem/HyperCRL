@@ -11,12 +11,13 @@ import matplotlib.pyplot as plt
 import time
 import os
 import copy
+from torch.utils.tensorboard import SummaryWriter
 
 print("PyTorch Version: ", torch.__version__)
 print("Torchvision Version: ", torchvision.__version__)
 
 
-def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, is_inception=False):
+def train_model(writer, model, dataloaders, criterion, optimizer, num_epochs=25, is_inception=False):
     since = time.time()
 
     val_acc_history = []
@@ -39,7 +40,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, is_ince
             running_corrects = 0
 
             # Iterate over data.
-            for data in dataloaders[phase]:
+            for i, data in enumerate(dataloaders[phase]):
                 inputs = data[0].to(device)
                 labels = data[1].to(device)
 
@@ -78,6 +79,16 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, is_ince
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
+
+                if phase == "train":
+                    if i % 10 != 0:
+                        continue
+
+                    n = len(dataloaders[phase])
+                    for name, parameters in model.named_parameters():
+                        writer.add_histogram(f'weights/{name}', parameters, n * epoch + i)
+                        writer.add_histogram(f'grad/{name}', parameters.grad, n * epoch + i)
+                        writer.add_scalar(f'grad_norm/{name}', torch.linalg.norm(parameters.grad, 1), n * epoch + i)
 
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
@@ -200,17 +211,23 @@ def initialize_model(model_name, num_classes, feature_extract, use_pretrained=Tr
         def __init__(self, num_ftrs, exponent=11, hidden_layers=0):
             super().__init__()
             hidden_dim = 2 ** exponent
+            hidden_layers = [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()] * hidden_layers
+            len(hidden_layers)
             self.layers = nn.Sequential(
-                nn.Linear(num_ftrs, hidden_dim), nn.ReLU(),
-                *([nn.Linear(hidden_dim, hidden_dim), nn.ReLU()] * hidden_layers),
+                nn.Linear(num_ftrs, hidden_dim), nn.LeakyReLU(), nn.BatchNorm1d(hidden_dim),
+                nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.BatchNorm1d(hidden_dim),
+                nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.BatchNorm1d(hidden_dim),
+                nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.BatchNorm1d(hidden_dim),
                 nn.Linear(hidden_dim, 2),
             )
+            for p in self.layers:
+                p.requires_grad = True
 
         def forward(self, x):
             x = self.layers(x)
             return x
 
-    return model_ft, Classifier(num_ftrs, exponent=11, hidden_layers=0), input_size
+    return model_ft, Classifier(num_ftrs, exponent=11, hidden_layers=4), input_size
 
 
 # Top level data directory. Here we assume the format of the directory conforms
@@ -299,18 +316,11 @@ classifier = classifier.to(device)
 #  doing feature extract method, we will only update the parameters
 #  that we have just initialized, i.e. the parameters with requires_grad
 #  is True.
-params_to_update = classifier.parameters()
 print("Params to learn:")
-if feature_extract:
-    params_to_update = []
-    for name, param in classifier.named_parameters():
-        if param.requires_grad == True:
-            params_to_update.append(param)
-            print("\t", name)
-else:
-    for name, param in classifier.named_parameters():
-        if param.requires_grad == True:
-            print("\t", name)
+params_to_update = []
+for name, param in classifier.named_parameters():
+    params_to_update.append(param)
+    print("\t", name)
 
 # Observe that all parameters are being optimized
 optimizer_ft = optim.SGD(params_to_update, lr=0.001, momentum=0.9)
@@ -318,8 +328,10 @@ optimizer_ft = optim.SGD(params_to_update, lr=0.001, momentum=0.9)
 # Setup the loss fxn
 criterion = nn.CrossEntropyLoss()
 
+writer = SummaryWriter()
+
 # Train and evaluate
-model_ft, hist = train_model(classifier, dataloaders_dict, criterion, optimizer_ft, num_epochs=num_epochs,
+model_ft, hist = train_model(writer, classifier, dataloaders_dict, criterion, optimizer_ft, num_epochs=num_epochs,
                              is_inception=(model_name == "inception"))
 
 # Plot the training curves of validation accuracy vs. number

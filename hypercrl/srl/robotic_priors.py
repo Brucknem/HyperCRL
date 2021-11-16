@@ -1,8 +1,6 @@
 import numpy as np
 import torch.nn
 
-from hypercrl.srl.datautil import DataCollector
-
 
 class SlownessPrior(torch.nn.Module):
     """

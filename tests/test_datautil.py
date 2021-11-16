@@ -110,6 +110,27 @@ class TestDataUtil(TestBase):
             self.assertListAlmostEqual(expected_action, action)
             collector.add(task_id, *self.generate_datapoint())
 
+    def test_get_same_actions(self) -> None:
+        collector = DataCollector(hparams=self.hparams)
+        task_id = 0
+
+        actions = [np.array([0] * 7), np.array([1] * 7)]
+
+        for i in range(self.hparams.vision_params.collector_max_capacity):
+            datapoint = self.generate_datapoint()
+            datapoint.action = actions[0 if np.random.random() < 0.5 else 1]
+            collector.add(task_id, *datapoint)
+
+        same_actions = collector.get_same_actions(task_id, 0)
+        action = collector.data_points[task_id][0].action
+        for dp in same_actions:
+            self.assertListAlmostEqual(dp.action, action)
+
+        same_actions = collector.get_same_actions(task_id, 9)
+        action = collector.data_points[task_id][9].action
+        for dp in same_actions:
+            self.assertListAlmostEqual(dp.action, action)
+
     def test_merge(self):
         task_id = 0
         other_task_id = task_id + 1
@@ -181,6 +202,24 @@ class TestDataUtil(TestBase):
         self.assertAlmostEqual(reward, index)
         self.assertAlmostEqual(sum(real_state) / len(real_state), index)
         self.assertAlmostEqual(sum(next_real_state) / len(next_real_state), index)
+
+    def test_normalize(self):
+        collector = DataCollector(hparams=self.hparams)
+        task_id = 0
+
+        for i in range(self.hparams.vision_params.collector_max_capacity):
+            collector.add(task_id, *(self.generate_datapoint()))
+
+        collector.normalize(task_id)
+
+        features = collector.get_values(task_id, 'features')
+        next_features = collector.get_values(task_id, 'next_features')
+
+        self.assertAlmostEqual(sum(np.mean(features, axis=0)), 0)
+        self.assertAlmostEqual(sum(np.std(features, axis=0)), len(features[0]))
+
+        self.assertAlmostEqual(sum(np.mean(next_features, axis=0)), 0)
+        self.assertAlmostEqual(sum(np.std(next_features, axis=0)), len(next_features[0]))
 
 
 if __name__ == '__main__':
