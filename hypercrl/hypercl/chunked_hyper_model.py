@@ -45,6 +45,7 @@ from .hyper_model import HyperNetwork
 from .utils import init_utils as iutils
 from .utils.module_wrappers import CLHyperNetInterface
 
+
 class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
     """This class handles an instance of the class
     :class:`toy_example.hyper_model.HyperNetwork` to produce the weights of a
@@ -75,19 +76,20 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
             single the internally maintained instance of a full hypernet.
         ce_dim (int): The size of the chunk embeddings.
     """
+
     def __init__(self, target_shapes, chunk_dim=2586,
                  layers=[50, 100], te_dim=8, activation_fn=torch.nn.ReLU(),
                  use_bias=True, no_weights=False, ce_dim=None,
                  init_weights=None, dropout_rate=-1, noise_dim=-1,
                  temb_std=-1):
         # FIXME find a way using super to handle multiple inheritence.
-        #super(ChunkedHyperNetworkHandler, self).__init__()
+        # super(ChunkedHyperNetworkHandler, self).__init__()
         nn.Module.__init__(self)
         CLHyperNetInterface.__init__(self)
 
-        assert(len(target_shapes) > 0)
+        assert (len(target_shapes) > 0)
         assert (init_weights is None or no_weights is False)
-        assert(ce_dim is not None)
+        assert (ce_dim is not None)
         self._target_shapes = target_shapes
         self._num_tasks = 0
         self._ce_dim = ce_dim
@@ -100,7 +102,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
         self._te_dim = te_dim
         self._noise_dim = noise_dim
         self._temb_std = temb_std
-        self._shifts = None # FIXME temporary test.
+        self._shifts = None  # FIXME temporary test.
 
         # FIXME: weights should incorporate chunk embeddings as they are part of
         # theta.
@@ -113,10 +115,10 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
         # process all chunks in one big batch and the hypernet will use the same
         # perturbed task embeddings for that reason (i.e., noise is shared).
         self._hypernet = HyperNetwork([[chunk_dim]], verbose=False,
-            layers=layers, te_dim=te_dim, activation_fn=activation_fn,
-            use_bias=use_bias, no_weights=no_weights, init_weights=init_weights,
-            ce_dim=ce_dim + (noise_dim if noise_dim != -1 else 0),
-            dropout_rate=dropout_rate, noise_dim=-1, temb_std=temb_std)
+                                      layers=layers, te_dim=te_dim, activation_fn=activation_fn,
+                                      use_bias=use_bias, no_weights=no_weights, init_weights=init_weights,
+                                      ce_dim=ce_dim + (noise_dim if noise_dim != -1 else 0),
+                                      dropout_rate=dropout_rate, noise_dim=-1, temb_std=temb_std)
 
         self._num_outputs = MainNetInterface.shapes_to_num_weights( \
             self._target_shapes)
@@ -126,24 +128,24 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
             self._embs = None
         else:
             self._embs = nn.Parameter(data=torch.Tensor(self._num_chunks,
-                ce_dim), requires_grad=True)
+                                                        ce_dim), requires_grad=True)
             nn.init.normal_(self._embs, mean=0., std=1.)
 
         # Note, the chunk embeddings are part of theta.
         hdims = self._hypernet.theta_shapes
         ntheta = MainNetInterface.shapes_to_num_weights(hdims) + \
-            (self._embs.numel() if not no_weights else 0)
+                 (self._embs.numel() if not no_weights else 0)
 
         ntembs = int(np.sum([t.numel() for t in self.get_task_embs()]))
         self._num_weights = ntheta + ntembs
-        print('Constructed hypernetwork with %d parameters ' % (ntheta \
-              + ntembs) + '(%d network weights + %d task embedding weights).'
-              % (ntheta, ntembs))
+        logging.info('Constructed hypernetwork with %d parameters ' % (ntheta \
+                                                                       + ntembs) + '(%d network weights + %d task embedding weights).'
+                     % (ntheta, ntembs))
 
-        print('The hypernetwork has a total of %d outputs.' % self._num_outputs)
+        logging.info('The hypernetwork has a total of %d outputs.' % self._num_outputs)
 
         self._theta_shapes = [[self._num_chunks, ce_dim]] + \
-            self._hypernet.theta_shapes
+                             self._hypernet.theta_shapes
 
         self._is_properly_setup()
 
@@ -194,19 +196,19 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
             # * noise dim must adhere correct behavior (different noise per
             #   external input).
             raise NotImplementedError('This hypernetwork implementation does ' +
-                'not yet support the passing of external inputs.')
+                                      'not yet support the passing of external inputs.')
 
         if theta is None:
             theta = self.theta
         else:
-            assert(len(theta) == len(self.theta_shapes))
-            assert(np.all(np.equal(self._embs.shape, list(theta[0].shape))))
+            assert (len(theta) == len(self.theta_shapes))
+            assert (np.all(np.equal(self._embs.shape, list(theta[0].shape))))
 
         chunk_embs = theta[0]
         hnet_theta = theta[1:]
 
         if dTheta is not None:
-            assert(len(dTheta) == len(self.theta_shapes))
+            assert (len(dTheta) == len(self.theta_shapes))
 
             chunk_embs = chunk_embs + dTheta[0]
             hnet_dTheta = dTheta[1:]
@@ -222,13 +224,13 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
                 eps = torch.zeros((1, self._noise_dim))
             if self._embs.is_cuda:
                 eps = eps.to(self._embs.get_device())
-                
+
             eps = eps.expand(self._num_chunks, self._noise_dim)
             chunk_embs = torch.cat([chunk_embs, eps], dim=1)
 
         # get chunked weights from HyperNet
         weights = self._hypernet.forward(task_id=task_id, theta=hnet_theta,
-            dTheta=hnet_dTheta, task_emb=task_emb, ext_inputs=chunk_embs)
+                                         dTheta=hnet_dTheta, task_emb=task_emb, ext_inputs=chunk_embs)
         weights = weights[0].view(1, -1)
 
         ### Reshape weights dependent on the main networks architecture.
@@ -236,10 +238,10 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
         ret = []
         for j, s in enumerate(self.target_shapes):
             num = int(np.prod(s))
-            W = weights[0][ind:ind+num]
+            W = weights[0][ind:ind + num]
             ind += num
             W = W.view(*s)
-            if self._shifts is not None: # FIXME temporary test!
+            if self._shifts is not None:  # FIXME temporary test!
                 W += self._shifts[j]
             ret.append(W)
         return ret
@@ -453,20 +455,20 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
         # chunks.
         if self._temb_std != -1:
             # Sum of uncorrelated variables.
-            temb_var += self._temb_std**2
+            temb_var += self._temb_std ** 2
 
         assert self._noise_dim == -1 or self._noise_dim > 0
 
         # TODO external inputs are not yet considered.
         inp_dim = self._te_dim + \
-            (self._noise_dim if self._noise_dim != -1 else 0)
-            #(self._size_ext_input if self._size_ext_input is not None else 0) \
+                  (self._noise_dim if self._noise_dim != -1 else 0)
+        # (self._size_ext_input if self._size_ext_input is not None else 0) \
 
-        inp_var = (self._te_dim  / inp_dim) * temb_var
-        #if self._size_ext_input is not None:
+        inp_var = (self._te_dim / inp_dim) * temb_var
+        # if self._size_ext_input is not None:
         #    inp_var += (self._size_ext_input  / inp_dim) * ext_inp_var
         if self._noise_dim != -1:
-            inp_var += (self._noise_dim  / inp_dim) * 1.
+            inp_var += (self._noise_dim / inp_dim) * 1.
 
         c_dim = self._ce_dim
 
@@ -475,12 +477,12 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
 
         for i, s in enumerate(self.target_shapes):
             # FIXME 1D shape is not necessarily bias vector.
-            if len(s) == 1: # Assume it's a bias vector
+            if len(s) == 1:  # Assume it's a bias vector
                 # Assume that last shape has been the corresponding weight
                 # tensor.
-                if i > 0 and len(self.target_shapes[i-1]) > 1:
+                if i > 0 and len(self.target_shapes[i - 1]) > 1:
                     fan_in, _ = iutils.calc_fan_in_and_out( \
-                        self.target_shapes[i-1])
+                        self.target_shapes[i - 1])
                 else:
                     # FIXME Quick-fix, use fan-out instead.
                     fan_in = s[0]
@@ -500,7 +502,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
                 elif method == 'out':
                     var = var_out
                 else:
-                    var = 2 * (1./var_in + 1./var_out)
+                    var = 2 * (1. / var_in + 1. / var_out)
 
                 target_vars.append(var)
 
@@ -515,7 +517,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
 
             while m > 0:
                 # Special treatment to fill up last chunk.
-                if j == self._num_chunks-1 and i == len(target_vars)-1:
+                if j == self._num_chunks - 1 and i == len(target_vars) - 1:
                     assert n <= m
                     o = m
                 else:
@@ -524,7 +526,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
                 var += o / self._chunk_dim * target_vars[i]
                 m -= o
                 n -= o
-                
+
                 if n == 0:
                     i += 1
                     if i < len(target_vars):
@@ -532,9 +534,9 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
 
             chunk_vars.append(var)
 
-        max_inp_var = (inp_dim+c_dim) / inp_dim * min(chunk_vars)
+        max_inp_var = (inp_dim + c_dim) / inp_dim * min(chunk_vars)
         max_inp_std = math.sqrt(max_inp_var)
-        print('Initializing hypernet with Chunked Hyperfan Init ...')
+        logging.info('Initializing hypernet with Chunked Hyperfan Init ...')
         if inp_var >= max_inp_var:
             warn('Note, hypernetwork inputs should have an initial total ' +
                  'variance (std) smaller than %f (%f) in order for this ' \
@@ -546,10 +548,10 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
         c_vars = []
         n_clipped = 0
         for i, var in enumerate(chunk_vars):
-            c_var = 1./c_dim * ((inp_dim+c_dim) * var - inp_dim * inp_var)
+            c_var = 1. / c_dim * ((inp_dim + c_dim) * var - inp_dim * inp_var)
             if c_var < eps:
                 n_clipped += 1
-                #warn('Initial variance of chunk embedding %d has to ' % i + \
+                # warn('Initial variance of chunk embedding %d has to ' % i + \
                 #     'be clipped.')
 
             c_vars.append(max(eps, c_var))
@@ -569,7 +571,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
 
         ### Initialize hypernet with fan-in init ###
         for i, w in enumerate(self._hypernet.theta):
-            if w.ndim == 1: # bias
+            if w.ndim == 1:  # bias
                 assert i % 2 == 1
                 torch.nn.init.constant_(w, 0)
 
@@ -579,6 +581,7 @@ class ChunkedHyperNetworkHandler(nn.Module, CLHyperNetInterface):
                 else:
                     torch.nn.init.kaiming_uniform_(w, mode='fan_in',
                                                    nonlinearity='relu')
+
 
 if __name__ == '__main__':
     pass

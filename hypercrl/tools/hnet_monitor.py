@@ -1,6 +1,7 @@
 import torch
 from .tools import MonitorRL
 
+
 class MonitorHnet(MonitorRL):
     def __init__(self, hparams, agent, mnet, hnet, collector):
         super(MonitorHnet, self).__init__(hparams, agent, mnet, collector, None)
@@ -18,8 +19,8 @@ class MonitorHnet(MonitorRL):
             self.loss_task /= self.print_train_every
             self.loss_reg /= self.print_train_every
             loss_tot = self.loss_reg + self.loss_task
-            print(f"Batch: {self.train_iter}, Loss: {loss_tot:.5f}, " + 
-                  f"Task L: {self.loss_task:.5f}, Reg L: {self.loss_reg:.5f}")
+            logging.info(f"Batch: {self.train_iter}, Loss: {loss_tot:.5f}, " +
+                         f"Task L: {self.loss_task:.5f}, Reg L: {self.loss_reg:.5f}")
 
             i = self.train_iter
 
@@ -32,12 +33,12 @@ class MonitorHnet(MonitorRL):
             if grad_tloss is not None:
                 (grad_tloss, grad_full, grad_diff_norm, grad_cos) = grad_tloss
                 self.writer.add_scalar('train/full_grad_norm',
-                                  torch.norm(grad_full, 2), i)
+                                       torch.norm(grad_full, 2), i)
                 self.writer.add_scalar('train/reg_grad_norm',
-                                  grad_diff_norm, i)
+                                       grad_diff_norm, i)
                 self.writer.add_scalar('train/cosine_task_reg',
-                                  grad_cos, i)
-            
+                                       grad_cos, i)
+
             self.loss_task = 0
             self.loss_reg = 0
 
@@ -57,12 +58,12 @@ class MonitorHnet(MonitorRL):
         self.mnet.eval()
         self.hnet.eval()
         gpuid = self.hparams.gpuid
-        
+
         # Initialize Stats
         val_loss = 0
         val_diff = 0
         N = len(loader)
-        
+
         with torch.no_grad():
             weights = self.hnet.forward(task_id)
 
@@ -70,21 +71,21 @@ class MonitorHnet(MonitorRL):
                 x_t, a_t, x_tt = data
                 x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
                 X = torch.cat((x_t, a_t), dim=-1)
-                
+
                 Y = self.mnet.forward(X, weights)
-                
+
                 loss = mll(Y, x_tt, weights)
                 if self.hparams.out_var:
-                    Y, _ = torch.split(Y, Y.size(-1)//2, dim=-1)
+                    Y, _ = torch.split(Y, Y.size(-1) // 2, dim=-1)
                 diff = torch.abs(Y - x_tt).mean(dim=0)
-                
+
                 val_loss += loss
                 val_diff += diff
-            
+
             val_loss = val_loss / N
             val_diff = val_diff / N
 
-        print(f"Iter {self.train_iter}, Task: {task_id}, " + \
-              f"Val Loss: {val_loss.item():.5f}, Val Diff: {val_diff.mean().item()}")
-        
+        logging.info(f"Iter {self.train_iter}, Task: {task_id}, " + \
+                     f"Val Loss: {val_loss.item():.5f}, Val Diff: {val_diff.mean().item()}")
+
         return val_loss, val_diff

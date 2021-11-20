@@ -2,7 +2,9 @@ import torch
 import numpy as np
 import random
 from torch.utils.data import TensorDataset, Dataset, random_split
-from gym.envs.robotics.rotations import quat_mul, quat_conjugate
+
+
+# from gym.envs.robotics.rotations import quat_mul, quat_conjugate
 
 def rotate_imgs(data, r=None):
     if r is None:
@@ -19,13 +21,15 @@ def rotate_imgs(data, r=None):
         img = np.rot90(data, k=r, axes=(1, 2))
         return (img, r)
 
+
 def train_val_split(dataset, val_size=0.25):
     val_size = int(len(dataset) * 0.25)
     train_size = len(dataset) - val_size
-    
+
     train_set, val_set = random_split(dataset, [train_size, val_size])
-    
+
     return train_set, val_set
+
 
 class DataCollector():
     def __init__(self, hparams):
@@ -67,23 +71,23 @@ class DataCollector():
         if self.env_name.startswith("inverted_pendulum") or self.env_name.startswith('cartpole'):
             if self.next_mode == "diff":
                 x_tt = x_tt - x_t
-            x_t = np.vstack(( x_t[0:1, :], np.cos(x_t[1:2, :]), np.sin(x_t[1:2, :]), x_t[2:, :] ))
+            x_t = np.vstack((x_t[0:1, :], np.cos(x_t[1:2, :]), np.sin(x_t[1:2, :]), x_t[2:, :]))
         elif self.env_name in ["half_cheetah_body", "hopper"]:
             if self.next_mode == "diff":
                 x_tt = np.vstack((x_tt[0:1, :], x_tt[1:, :] - x_t[1:, :]))
-            x_t = np.vstack(( x_t[1:2, :], np.cos(x_t[2:3, :]), np.sin(x_t[2:3, :]), x_t[3:, :] ))
+            x_t = np.vstack((x_t[1:2, :], np.cos(x_t[2:3, :]), np.sin(x_t[2:3, :]), x_t[3:, :]))
         elif self.env_name == "door":
             if self.next_mode == "diff":
                 x_tt = x_tt - x_t
-            x_t = np.vstack(( x_t[0:-1, :], np.cos(x_t[-1:, :]), np.sin(x_t[-1:, :]) ))
+            x_t = np.vstack((x_t[0:-1, :], np.cos(x_t[-1:, :]), np.sin(x_t[-1:, :])))
         elif self.env_name == "door_pose":
             if self.next_mode == "diff":
                 quat_diff = quat_mul(x_tt[3:7, :].T, quat_conjugate(x_t[3:7, :].T)).T
                 x_tt = x_tt - x_t
                 x_tt[3:7, :] = quat_diff
 
-            x_t = np.vstack(( x_t[0:-2, :], np.cos(x_t[-2:-1, :]), np.sin(x_t[-2:-1, :]),
-                    np.cos(x_t[-1:, :]), np.sin(x_t[-1:, :])))
+            x_t = np.vstack((x_t[0:-2, :], np.cos(x_t[-2:-1, :]), np.sin(x_t[-2:-1, :]),
+                             np.cos(x_t[-1:, :]), np.sin(x_t[-1:, :])))
         else:
             if self.next_mode == "diff":
                 x_tt = x_tt - x_t
@@ -149,7 +153,7 @@ class DataCollector():
         self.norms[task_id] = (x_mu, x_std, a_mu, a_std)
 
         return self.norms[task_id]
-    
+
     def norm(self, task_id):
         """
         Return x_mu, x_std, a_mu, a_std, (dx_mu, dx_std) of the given task_id
@@ -190,6 +194,7 @@ class DataCollector():
             N.append(len(self.states[x]))
         return N
 
+
 class Split_Class_Dataset(Dataset):
     """
     New Disjoint Class Setting
@@ -197,14 +202,15 @@ class Split_Class_Dataset(Dataset):
     Given a dataset (train or val or test),
     Return a dataset that can set new tasks
     """
-    def __init__(self, data, num_task = 1, rot=False):
+
+    def __init__(self, data, num_task=1, rot=False):
         self.data = data
         self.rot = rot
         self.map = {}
         self.task_id = 0
         self.num_task = num_task
         self.compile()
-    
+
     def compile(self):
         for i, (X, y) in enumerate(self.data):
             if y not in self.map:
@@ -218,18 +224,18 @@ class Split_Class_Dataset(Dataset):
         per_task = int(total // self.num_task)
         index = [i for i in range(total)]
         # TODO: randomize index selection per group
-        
+
         # Map each task to a set of data indices
         # by joining the tasks
         task_inds = {}
         for id in range(self.num_task):
             base = id * per_task
             task_inds[id] = []
-            for i in range(base, base+per_task):
+            for i in range(base, base + per_task):
                 task_inds[id] += self.map[index[i]]
-        
+
         task_inds[self.num_task] = np.arange(len(self.data))
-        
+
         self.map = task_inds
 
     def set_task(self, id):
@@ -237,7 +243,7 @@ class Split_Class_Dataset(Dataset):
             id = self.num_task
         if id not in self.map:
             raise ValueError("Task ID not found")
-        
+
         self.task_id = id
 
     def __getitem__(self, index):
@@ -250,12 +256,13 @@ class Split_Class_Dataset(Dataset):
     def __len__(self):
         return len(self.map[self.task_id])
 
+
 class Mixed_Dataset(Dataset):
 
     def __init__(self, datas, mode):
         assert hasattr(datas, '__len__')
         assert hasattr(datas[0], '__len__')
-        
+
         self.mode = mode
         self.datas = datas
         self.lens = [len(data) for data in self.datas]
@@ -273,7 +280,7 @@ class Mixed_Dataset(Dataset):
             self.map.append((ds_ind, ind))
 
         if mode == "iid":
-            np.random.shuffle(self.map)      
+            np.random.shuffle(self.map)
 
     def __getitem__(self, index):
         if self.mode == "iid":
@@ -284,4 +291,4 @@ class Mixed_Dataset(Dataset):
             return self.datas[ds][ind]
 
     def __len__(self):
-        return self.total        
+        return self.total
