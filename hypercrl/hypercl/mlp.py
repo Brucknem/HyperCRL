@@ -29,6 +29,8 @@ auxilliary network, a so called hypernetwork, see
     Ha et al., "HyperNetworks", arXiv, 2016,
     https://arxiv.org/abs/1609.09106
 """
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
