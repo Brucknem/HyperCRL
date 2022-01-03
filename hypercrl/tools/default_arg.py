@@ -2,19 +2,19 @@ class Hparams():
     @staticmethod
     def add_hnet_hparams(hparams):
         # Hypernetwork
-        if hparams.h_dims == [32, 32]:
+        if hparams.hidden_layers == [32, 32]:
             hparams.hnet_arch = [16, 16]
-        elif hparams.h_dims == [200, 200]:
+        elif hparams.hidden_layers == [200, 200]:
             hparams.hnet_arch = [50, 50]
-        elif hparams.h_dims == [256, 256]:
+        elif hparams.hidden_layers == [256, 256]:
             hparams.hnet_arch = [128, 128]
-        elif hparams.h_dims == [200, 200, 200, 200]:
+        elif hparams.hidden_layers == [200, 200, 200, 200]:
             hparams.hnet_arch = [256, 256]
-        elif hparams.h_dims == [200, 200, 200]:
+        elif hparams.hidden_layers == [200, 200, 200]:
             hparams.hnet_arch = [100, 100]
-        elif hparams.h_dims == [400, 400, 400]:
+        elif hparams.hidden_layers == [400, 400, 400]:
             hparams.hnet_arch = [100, 100]
-        elif hparams.h_dims == [100, 100]:
+        elif hparams.hidden_layers == [100, 100]:
             hparams.hnet_arch = [40, 40]
 
         if hparams.env == "door":
@@ -61,15 +61,15 @@ class Hparams():
     @staticmethod
     def add_chunked_hnet_hparams(hparams):
         # Hypernetwork 
-        if hparams.h_dims == [256, 256]:
+        if hparams.hidden_layers == [256, 256]:
             hparams.hnet_arch = [5, 5]
             hparams.chunk_dim = 12000  # Chunk size (output dim of hnet)
             hparams.cemb_size = 40
-        elif hparams.h_dims == [200, 200, 200, 200]:
+        elif hparams.hidden_layers == [200, 200, 200, 200]:
             hparams.hnet_arch = [25, 30]
             hparams.chunk_dim = 4000
             hparams.cemb_size = 20
-        elif hparams.h_dims == [200, 200]:
+        elif hparams.hidden_layers == [200, 200]:
             hparams.hnet_arch = [20, 20]
             hparams.chunk_dim = 2000
             hparams.cemb_size = 20
@@ -167,7 +167,7 @@ def default_arg_metaworld10(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "diff"
     hparams.normalize_xu = True
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
     hparams.out_var = False
 
     hparams.lr = 0.001
@@ -217,7 +217,7 @@ def default_arg_humanoid(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "state"  # or "diff"
     hparams.normalize_xu = True
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
     hparams.out_var = False
 
     hparams.lr = 0.0001
@@ -262,7 +262,7 @@ def default_arg_hopper(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "diff"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200, 200, 200]
+    hparams.hidden_layers = [200, 200, 200, 200]
     hparams.out_var = True
 
     hparams.lr = 0.001
@@ -311,7 +311,7 @@ def default_arg_pendulum(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = False
-    hparams.h_dims = [32, 32]
+    hparams.hidden_layers = [32, 32]
     hparams.out_var = False
 
     hparams.lr = 0.001
@@ -357,7 +357,7 @@ def default_arg_inverted_pendulum(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = False
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
@@ -402,7 +402,7 @@ def default_arg_half_cheetah(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "diff"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200, 200, 200]
+    hparams.hidden_layers = [200, 200, 200, 200]
     hparams.out_var = True
 
     hparams.lr = 0.001
@@ -452,14 +452,14 @@ def default_arg_cartpole(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 32
     hparams.reg_lambda = 0.00005
     hparams.train_dynamic_iters = 500
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 500
 
@@ -500,14 +500,14 @@ def default_arg_cartpole_bin(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = False
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 32
     hparams.reg_lambda = 0.00005
     hparams.train_dynamic_iters = 500
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 500
 
@@ -546,7 +546,7 @@ def default_arg_2d_car(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "state"  # or "diff"
     hparams.normalize_xu = True
-    hparams.h_dims = [32, 32]
+    hparams.hidden_layers = [32, 32]
     hparams.out_var = False
 
     hparams.lr = 0.001
@@ -593,7 +593,7 @@ def default_arg_10d_car(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "diff"
     hparams.normalize_xu = False
-    hparams.h_dims = [32, 32]
+    hparams.hidden_layers = [32, 32]
 
     hparams.lr = 0.0001
     hparams.lr_steps = None
@@ -638,14 +638,14 @@ def default_arg_reacher(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [256, 256]
+    hparams.hidden_layers = [256, 256]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 32
     hparams.reg_lambda = 0.00005
     hparams.train_dynamic_iters = 150
-    hparams.print_train_every = 150
+    hparams.log_train_every = 150
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 150
 
@@ -690,14 +690,14 @@ def default_arg_pusher(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200]
+    hparams.hidden_layers = [200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0
     hparams.train_dynamic_iters = 2000
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 1000
 
@@ -742,14 +742,14 @@ def default_arg_pusher_rot(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200]
+    hparams.hidden_layers = [200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0
     hparams.train_dynamic_iters = 2000
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 1000
 
@@ -794,14 +794,14 @@ def default_arg_pusher_slide(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200]
+    hparams.hidden_layers = [200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0
     hparams.train_dynamic_iters = 500
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 1000
 
@@ -846,14 +846,14 @@ def default_arg_door(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200]
+    hparams.hidden_layers = [200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0
     hparams.train_dynamic_iters = 2000
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 1000
 
@@ -898,14 +898,14 @@ def default_arg_door_pose(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "diff"  # or "state"
     hparams.normalize_xu = True
-    hparams.h_dims = [200, 200, 200, 200]
+    hparams.hidden_layers = [200, 200, 200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0.00001
     hparams.train_dynamic_iters = 200
-    hparams.print_train_every = 200
+    hparams.log_train_every = 200
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 200
 
@@ -950,14 +950,14 @@ def default_arg_manipulator_environment(hparams):
     # Common Dynamics Model
     hparams.dnn_out = "state"  # or "diff"  # or "state"
     hparams.normalize_xu = False
-    hparams.h_dims = [200, 200, 200, 200]
+    hparams.hidden_layers = [200, 200, 200, 200]
 
     hparams.lr = 0.001
     hparams.lr_steps = None  # learning rate decay steps
     hparams.bs = 100
     hparams.reg_lambda = 0.00001
     hparams.train_dynamic_iters = 1000
-    hparams.print_train_every = 500
+    hparams.log_train_every = 500
     hparams.gpuid = 'cuda:0'
     hparams.eval_every = 200
 

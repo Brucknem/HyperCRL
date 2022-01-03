@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from warnings import warn
 
+
 class CLHyperNetInterface(ABC):
     """A general interface for task-conditioned hypernetworks, that are used
     for continual learning.
@@ -56,9 +57,10 @@ class CLHyperNetInterface(ABC):
             weight tensors generated for a main network (i.e., the shapes of
             the hypernet output).
     """
+
     def __init__(self):
         """Initialize the network."""
-        super(CLHyperNetInterface, self).__init__()
+        # super(CLHyperNetInterface, self).__init__()
 
         warn('Please use class "hnets.hnet_interface.CLHyperNetInterface" ' +
              'instead.', DeprecationWarning)
@@ -78,12 +80,12 @@ class CLHyperNetInterface(ABC):
     def _is_properly_setup(self):
         """This method can be used by classes that implement this interface to
         check whether all required properties have been set."""
-        #assert(self._theta is not None)
-        #assert(self._task_embs is not None)
-        assert(self._theta_shapes is not None)
-        assert(self._num_weights is not None)
-        assert(self._num_outputs is not None)
-        assert(self._target_shapes is not None)
+        # assert(self._theta is not None)
+        # assert(self._task_embs is not None)
+        assert (self._theta_shapes is not None)
+        assert (self._num_weights is not None)
+        assert (self._num_outputs is not None)
+        assert (self._target_shapes is not None)
 
     @property
     def theta(self):
@@ -132,7 +134,7 @@ class CLHyperNetInterface(ABC):
     @property
     def num_task_embs(self):
         """Getter for read-only attribute num_task_embs."""
-        assert(self.has_task_embs)
+        assert (self.has_task_embs)
         return len(self._task_embs)
 
     @property
@@ -155,7 +157,7 @@ class CLHyperNetInterface(ABC):
         Returns:
             A list of Parameter tensors.
         """
-        assert(self.has_task_embs)
+        assert (self.has_task_embs)
         return self._task_embs
 
     def get_task_emb(self, task_id):
@@ -168,7 +170,7 @@ class CLHyperNetInterface(ABC):
         Returns:
             A list of Parameter tensors.
         """
-        assert(self.has_task_embs)
+        assert (self.has_task_embs)
         return self._task_embs[task_id]
 
     @abstractmethod
@@ -202,7 +204,8 @@ class CLHyperNetInterface(ABC):
             A list of weights. Two consecutive entries always correspond to a
             weight matrix followed by a bias vector.
         """
-        pass # TODO implement
+        pass  # TODO implement
+
 
 class MainNetInterface(ABC):
     """A general interface for main networks, that can be used stand-alone
@@ -236,6 +239,7 @@ class MainNetInterface(ABC):
         num_params: The total number of weights in the parameter tensors
             described by the attribute "param_shapes".
     """
+
     def __init__(self):
         """Initialize the network.
 
@@ -259,17 +263,17 @@ class MainNetInterface(ABC):
     def _is_properly_setup(self):
         """This method can be used by classes that implement this interface to
         check whether all required properties have been set."""
-        assert(self._weights is not None or self._hyper_shapes is not None)
+        assert (self._weights is not None or self._hyper_shapes is not None)
         if self._weights is not None and self._hyper_shapes is not None:
-            assert((len(self._weights) + len(self._hyper_shapes)) == \
-                   len(self._all_shapes))
+            assert ((len(self._weights) + len(self._hyper_shapes)) == \
+                    len(self._all_shapes))
         elif self._weights is not None:
-            assert(len(self._weights) == len(self._all_shapes))
+            assert (len(self._weights) == len(self._all_shapes))
         else:
-            assert(len(self._hyper_shapes) == len(self._all_shapes))
-        assert(self._all_shapes is not None)
-        assert(isinstance(self._has_bias, bool))
-        assert(isinstance(self._has_fc_out, bool))
+            assert (len(self._hyper_shapes) == len(self._all_shapes))
+        assert (self._all_shapes is not None)
+        assert (isinstance(self._has_bias, bool))
+        assert (isinstance(self._has_fc_out, bool))
 
     @property
     def weights(self):
@@ -321,7 +325,6 @@ class MainNetInterface(ABC):
                                            self.param_shapes]))
         return self._num_params
 
+
 if __name__ == '__main__':
     pass
-
-

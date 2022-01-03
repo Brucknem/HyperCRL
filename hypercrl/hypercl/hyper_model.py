@@ -41,6 +41,7 @@ weights), one would have to prodvide two distinct implementations:
       methods provided in nn.functional and instead find a way to wrap
       parameters inside modules that fulfill no other purpose.
 """
+import logging
 import math
 import numpy as np
 import torch

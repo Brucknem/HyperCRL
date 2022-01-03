@@ -136,10 +136,10 @@ def build_model_hnet(hparams, num_input=2):
             state_dim = hparams.state_dim + 2
         input_dim = state_dim + hparams.control_dim
     else:
-        input_dim, out_dim = hparams.in_dim, hparams.out_dim
+        input_dim, out_dim = hparams.n_in, hparams.out_dim
 
     mnet = MLP(n_in=input_dim,
-               n_out=out_dim, hidden_layers=hparams.h_dims,
+               n_out=out_dim, hidden_layers=hparams.hidden_layers,
                no_weights=True, out_var=hparams.out_var,
                mlp_var_minmax=hparams.mlp_var_minmax)
 

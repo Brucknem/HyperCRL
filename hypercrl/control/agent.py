@@ -171,7 +171,7 @@ class MPC(Agent):
         elif self.model_name.startswith("hnet") or self.model_name == "chunked_hnet":
             weights = self.hnet(task_id) if self._cached_weights is None else self._cached_weights
             xu = torch.cat((x, u), dim=-1)
-            xx = self.model.forward(xu, weights)
+            xx = self.model.forward_model(xu, weights)
 
         # For probablistic output, select the mean
         if self.out_var:

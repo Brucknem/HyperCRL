@@ -115,7 +115,7 @@ def read_hparams(folder, file):
 class MonitorBase():
     def __init__(self, hparams, model, collector, btest):
         self.eval_every = hparams.eval_every
-        self.print_train_every = hparams.print_train_every
+        self.print_train_every = hparams.log_train_every
         self.log_hist_every = 1000
         self.train_iter = 0
         self.epoch = 0

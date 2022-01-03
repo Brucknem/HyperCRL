@@ -29,6 +29,7 @@ import numpy as np
 
 from .module_wrappers import CLHyperNetInterface
 
+
 def get_current_targets(task_id, hnet):
     r"""For all :math:`j < \text{task\_id}`, compute the output of the
     hypernetwork. This output will be detached from the graph and cloned before
@@ -71,6 +72,7 @@ def get_current_targets(task_id, hnet):
 
     return ret
 
+
 def calc_jac_reguarizer(hnet, task_id, dTheta, device):
     r"""Compute the CL regularzier, which is a sum over all previous task
     ID's, that enforces that the norm of the matrix product of hypernet
@@ -96,19 +98,19 @@ def calc_jac_reguarizer(hnet, task_id, dTheta, device):
     Returns:
         The value of the regularizer.
     """
-    assert(task_id > 0)
-    assert(hnet.has_theta) # We need parameters to be regularized.
+    assert (task_id > 0)
+    assert (hnet.has_theta)  # We need parameters to be regularized.
 
     reg = 0
 
-    for i in range(task_id): # For all previous tasks.
+    for i in range(task_id):  # For all previous tasks.
         W = torch.cat([w.view(-1) for w in hnet.forward(task_id=i)])
 
         # Problem, autograd.grad() accumulates all gradients with
         # respect to each w in "W". Hence, we don't get a Jacobian but a
         # tensor of the same size as "t", where the partials of all W's
         # with respect to this "t" are summed.
-        #J = torch.autograd.grad(W, t,
+        # J = torch.autograd.grad(W, t,
         #    grad_outputs=torch.ones(W.size()).to(device),
         #    retain_graph=True, create_graph=True, only_inputs=True)[0]
         #
@@ -122,8 +124,8 @@ def calc_jac_reguarizer(hnet, task_id, dTheta, device):
             # of it (`grad` may also reuse gradients in this case).
             for tind, t in enumerate(hnet.theta):
                 partial = torch.autograd.grad(w, t, grad_outputs=None,
-                    retain_graph=True, create_graph=True,
-                    only_inputs=True)[0]
+                                              retain_graph=True, create_graph=True,
+                                              only_inputs=True)[0]
 
                 # Intuitively, "partial" represents part of a row in the
                 # Jacobian (if dTheta would have been linearized to a
@@ -141,6 +143,7 @@ def calc_jac_reguarizer(hnet, task_id, dTheta, device):
     # Normalize by the number of tasks.
     return reg / task_id
 
+
 def calc_value_preserving_reg(hnet, task_id, dTheta):
     r"""This regularizer simply restricts a change in output-mapping for
     previous task embeddings. I.e., for all j < task_id minimize:
@@ -154,12 +157,12 @@ def calc_value_preserving_reg(hnet, task_id, dTheta):
     Returns:
         The value of the regularizer.
     """
-    assert(task_id > 0)
-    assert(hnet.has_theta) # We need parameters to be regularized.
+    assert (task_id > 0)
+    assert (hnet.has_theta)  # We need parameters to be regularized.
 
     reg = 0
 
-    for i in range(task_id): # For all previous tasks.
+    for i in range(task_id):  # For all previous tasks.
         W_prev = torch.cat([w.view(-1) for w in hnet.forward(task_id=i)])
         W_new = torch.cat([w.view(-1) for w in hnet.forward(task_id=i,
                                                             dTheta=dTheta)])
@@ -167,6 +170,7 @@ def calc_value_preserving_reg(hnet, task_id, dTheta):
         reg += (W_prev - W_new).pow(2).sum()
 
     return reg / task_id
+
 
 def calc_fix_target_reg(hnet, task_id, targets=None, dTheta=None, dTembs=None,
                         mnet=None, inds_of_out_heads=None,
@@ -239,17 +243,17 @@ def calc_fix_target_reg(hnet, task_id, targets=None, dTheta=None, dTembs=None,
     Returns:
         The value of the regularizer.
     """
-    assert(isinstance(hnet, CLHyperNetInterface))
-    assert(task_id > 0)
-    assert(hnet.has_theta) # We need parameters to be regularized.
-    assert(targets is None or len(targets) == task_id)
-    assert(inds_of_out_heads is None or mnet is not None)
-    assert(inds_of_out_heads is None or len(inds_of_out_heads) >= task_id)
-    assert(targets is None or (prev_theta is None and prev_task_embs is None))
-    assert(prev_theta is None or prev_task_embs is not None)
-    assert(prev_task_embs is None or len(prev_task_embs) >= task_id)
-    assert(dTembs is None or len(dTembs) >= task_id)
-    assert(reg_scaling is None or len(reg_scaling) >= task_id)
+    assert (isinstance(hnet, CLHyperNetInterface))
+    assert (task_id > 0)
+    assert (hnet.has_theta)  # We need parameters to be regularized.
+    assert (targets is None or len(targets) == task_id)
+    assert (inds_of_out_heads is None or mnet is not None)
+    assert (inds_of_out_heads is None or len(inds_of_out_heads) >= task_id)
+    assert (targets is None or (prev_theta is None and prev_task_embs is None))
+    assert (prev_theta is None or prev_task_embs is not None)
+    assert (prev_task_embs is None or len(prev_task_embs) >= task_id)
+    assert (dTembs is None or len(dTembs) >= task_id)
+    assert (reg_scaling is None or len(reg_scaling) >= task_id)
 
     # Number of tasks to be regularized.
     num_regs = task_id
@@ -316,11 +320,13 @@ def calc_fix_target_reg(hnet, task_id, targets=None, dTheta=None, dTembs=None,
 
     return reg / num_regs
 
+
 def _assert_shape_equality(list1, list2):
     """Ensure that 2 lists of tensors have the same shape."""
-    assert(len(list1) == len(list2))
+    assert (len(list1) == len(list2))
     for i in range(len(list1)):
-        assert(np.all(np.equal(list(list1[i].shape), list(list2[i].shape))))
+        assert (np.all(np.equal(list(list1[i].shape), list(list2[i].shape))))
+
 
 def flatten_and_remove_out_heads(mnet, weights, allowed_outputs):
     """Flatten a list of target network tensors to a single vector, such that
@@ -346,25 +352,24 @@ def flatten_and_remove_out_heads(mnet, weights, allowed_outputs):
     # compatibility.
     # Previously, it was assumed sufficient for masking if `has_fc_out` was set
     # to True.
-    assert(mnet.has_fc_out)
-    assert(not hasattr(mnet, 'mask_fc_out') or \
-           (mnet.has_fc_out and mnet.mask_fc_out))
+    assert (mnet.has_fc_out)
+    assert (not hasattr(mnet, 'mask_fc_out') or \
+            (mnet.has_fc_out and mnet.mask_fc_out))
 
-    obias_ind = len(weights)-1 if mnet.has_bias else -1
-    oweights_ind = len(weights)-2 if mnet.has_bias else len(weights)-1
+    obias_ind = len(weights) - 1 if mnet.has_bias else -1
+    oweights_ind = len(weights) - 2 if mnet.has_bias else len(weights) - 1
 
     ret = []
     for i, w in enumerate(weights):
-        if i == obias_ind: # Output bias
+        if i == obias_ind:  # Output bias
             ret.append(w[allowed_outputs])
-        elif i == oweights_ind: # Output weights
+        elif i == oweights_ind:  # Output weights
             ret.append(w[allowed_outputs, :].view(-1))
         else:
             ret.append(w.view(-1))
 
     return torch.cat(ret)
 
+
 if __name__ == '__main__':
     pass
-
-

@@ -53,7 +53,7 @@ class PNN(nn.Module):
 
         self.num_tasks = 0
 
-        self.h_dims = hparams.h_dims
+        self.h_dims = hparams.hidden_layers
         self.columns = nn.ModuleList([])
 
     def freeze(self, k):
@@ -129,7 +129,7 @@ class Baseline(nn.Module):
         # Hiden Layers
         layers = []
         in_dim = x_dim + a_dim
-        for i, dim in enumerate(hparams.h_dims):
+        for i, dim in enumerate(hparams.hidden_layers):
             layers.append(nn.Linear(in_dim, dim))
             layers.append(nn.ReLU(inplace=True))
             in_dim = dim

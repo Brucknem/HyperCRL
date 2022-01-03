@@ -72,7 +72,7 @@ class MonitorHnet(MonitorRL):
                 x_t, a_t, x_tt = x_t.to(gpuid), a_t.to(gpuid), x_tt.to(gpuid)
                 X = torch.cat((x_t, a_t), dim=-1)
 
-                Y = self.mnet.forward(X, weights)
+                Y = self.mnet.forward_model(X, weights)
 
                 loss = mll(Y, x_tt, weights)
                 if self.hparams.out_var:

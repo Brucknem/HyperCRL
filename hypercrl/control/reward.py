@@ -3,9 +3,10 @@ import logging
 import torch
 import numpy as np
 
+
 # from gym.envs.robotics.rotations import quat2euler, quat_mul
-from Envs.manipulator_environment import ManipulatorEnvironmentReaching, ManipulatorEnvironmentDebug, \
-    ManipulatorEnvironmentPushing
+# from Envs.manipulator_environment import ManipulatorEnvironmentReaching, ManipulatorEnvironmentDebug, \
+#     ManipulatorEnvironmentPushing
 
 
 class GTCost():

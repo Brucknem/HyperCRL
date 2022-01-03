@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import random
 import matplotlib
@@ -117,7 +119,7 @@ class TaskLossMT(TaskLoss):
         # Forward Pass
         X = torch.cat((x_t, a_t), dim=-1)
         weights = self.hnet.forward(tid)
-        Y = self.mnet.forward(X, weights)
+        Y = self.mnet.forward_model(X, weights)
 
         # Task-specific loss.
         loss_task = super().forward(Y, x_tt, weights, add_reg_logvar=False)
@@ -268,7 +270,7 @@ def train(task_id, mnet, hnet, trainer_misc, logger, train_set, hparams):
                 for weight in weights:
                     weight.retain_grad()  # save grad for calculate si path integral
 
-            Y = mnet.forward(X, weights)
+            Y = mnet.forward_model(X, weights)
             # Task-specific loss.
             loss_task = mll(Y, x_tt, weights)
             # We already compute the gradients, to then be able to compute delta
