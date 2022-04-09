@@ -3,6 +3,8 @@ import time
 import logging
 from torch.distributions.multivariate_normal import MultivariateNormal
 
+from MA.utils import timeit_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,7 +91,7 @@ class CEM():
         self.nu = nu
 
         self.mean = None
-        #self.cov = None
+        # self.cov = None
         self.std = None
 
         self.F = dynamics
@@ -103,7 +105,7 @@ class CEM():
             self.u_min = -self.u_max
         if self.u_min is not None and self.u_max is None:
             self.u_max = -self.u_min
-        if self.u_min is not None:
+        if self.u_min is not None and torch.is_tensor(self.u_min):
             self.u_min = self.u_min.to(device=self.d)
             self.u_max = self.u_max.to(device=self.d)
         self.action_distribution = None
@@ -118,14 +120,14 @@ class CEM():
         # action distribution, initialized as N(0,I)
         # we do Hp x 1 instead of H x p because covariance will be Hp x Hp matrix instead of some higher dim tensor
         self.mean = torch.zeros(self.T * self.nu, device=self.d, dtype=self.dtype)
-        #self.cov = torch.eye(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
+        # self.cov = torch.eye(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
         self.std = torch.ones(self.T * self.nu, device=self.d, dtype=self.dtype) * self.init_cov_diag
 
     def _bound_samples(self, samples):
         if self.u_max is not None:
             for t in range(self.T):
                 u = samples[:, self._slice_control(t)]
-                cu = torch.max(torch.min(u, self.u_max), self.u_min)
+                cu = torch.clip(u, max=self.u_max, min=self.u_min)
                 samples[:, self._slice_control(t)] = cu
         return samples
 
@@ -146,8 +148,8 @@ class CEM():
     def _sample_top_trajectories(self, state, num_elite, task_id):
         # sample K action trajectories
         # in case it's singular
-        #self.action_distribution = MultivariateNormal(self.mean, covariance_matrix=self.cov)
-        #samples = self.action_distribution.sample((self.K,))
+        # self.action_distribution = MultivariateNormal(self.mean, covariance_matrix=self.cov)
+        # samples = self.action_distribution.sample((self.K,))
 
         samples = self.mean + self.std * torch.randn(self.K, self.T * self.nu, device=self.d, dtype=self.dtype)
         # bound to control maximums
@@ -166,14 +168,15 @@ class CEM():
 
         self.reset()
 
-        for m in range(self.M):
-            top_samples = self._sample_top_trajectories(state, self.num_elite, task_id)
-            # fit the gaussian to those samples
-            self.mean = torch.mean(top_samples, dim=0)
-            self.std = torch.std(top_samples, dim=0, unbiased=False)
-            # self.cov = pytorch_cov(top_samples, rowvar=False)
-            # if torch.matrix_rank(self.cov) < self.cov.shape[0]:
-            #     self.cov += self.cov_reg
+        with timeit_context(name="Sample top trajectories"):
+            for m in range(self.M):
+                top_samples = self._sample_top_trajectories(state, self.num_elite, task_id)
+                # fit the gaussian to those samples
+                self.mean = torch.mean(top_samples, dim=0)
+                self.std = torch.std(top_samples, dim=0, unbiased=False)
+                # self.cov = pytorch_cov(top_samples, rowvar=False)
+                # if torch.matrix_rank(self.cov) < self.cov.shape[0]:
+                #     self.cov += self.cov_reg
 
         if self.choose_best:
             top_sample = self._sample_top_trajectories(state, 1, task_id)

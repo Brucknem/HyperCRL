@@ -30,6 +30,7 @@ AVAILABLE_TRANSFORMS = {
     ],
 }
 
+
 def get_data_loader(dataset, batch_size, cuda=False, collate_fn=None, drop_last=False, augment=False):
     '''Return <DataLoader>-object for the provided <DataSet>-object [dataset].'''
 
@@ -55,7 +56,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
 
     def __init__(self):
         super().__init__()
- 
+
     def _device(self):
         return next(self.parameters()).device
 
@@ -66,8 +67,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
     def forward(self, x):
         pass
 
-
-    #----------------- XdG-specifc functions -----------------#
+    # ----------------- XdG-specifc functions -----------------#
 
     def apply_XdGmask(self, task):
         '''Apply task-specific mask, by setting activity of pre-selected subset of nodes to zero.
@@ -77,9 +77,9 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
         torchType = next(self.parameters()).detach()
 
         # Loop over all buffers for which a task-specific mask has been specified
-        for i,excit_buffer in enumerate(self.excit_buffer_list):
+        for i, excit_buffer in enumerate(self.excit_buffer_list):
             gating_mask = np.repeat(1., len(excit_buffer))
-            gating_mask[self.mask_dict[task][i]] = 0.      # -> find task-specifc mask
+            gating_mask[self.mask_dict[task][i]] = 0.  # -> find task-specifc mask
             excit_buffer.set_(torchType.new(gating_mask))  # -> apply this mask
 
     def reset_XdGmask(self):
@@ -87,10 +87,9 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
         torchType = next(self.parameters()).detach()
         for excit_buffer in self.excit_buffer_list:
             gating_mask = np.repeat(1., len(excit_buffer))  # -> define "unit mask" (i.e., no masking at all)
-            excit_buffer.set_(torchType.new(gating_mask))   # -> apply this unit mask
+            excit_buffer.set_(torchType.new(gating_mask))  # -> apply this unit mask
 
-
-    #----------------- EWC-specifc functions -----------------#
+    # ----------------- EWC-specifc functions -----------------#
 
     def estimate_fisher(self, dataset, allowed_classes=None, collate_fn=None):
         '''After completing training on a task, estimate diagonal of Fisher Information matrix.
@@ -131,7 +130,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                 output = self(x)
             if self.empircal_fisher:
                 if self.out_var:
-                    mu, logvar = torch.split(output, output.size(-1)//2, dim=-1)
+                    mu, logvar = torch.split(output, output.size(-1) // 2, dim=-1)
                 else:
                     mu = output
                     logvar = torch.zeros_like(mu)
@@ -141,7 +140,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
             else:
                 # In this case, compute the true fisher
                 # F_ii = E_x {\sum_j [(grad_theta_i u_j)^2/sigma_j]}
-                negloglikelihood = output.sum() # Assume unit covariance
+                negloglikelihood = output.sum()  # Assume unit covariance
 
             # Calculate gradient of negative loglikelihood
             self.zero_grad()
@@ -155,22 +154,23 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                         est_fisher_info[n] += p.grad.detach() ** 2
 
         # Normalize by sample size used for estimation
-        est_fisher_info = {n: p/index for n, p in est_fisher_info.items()}
+        est_fisher_info = {n: p / index for n, p in est_fisher_info.items()}
 
         # Store new values in the network
         for n, p in self.named_parameters():
             if p.requires_grad:
                 n = n.replace('.', '__')
                 # -mode (=MAP parameter estimate)
-                self.register_buffer('{}_EWC_prev_task{}'.format(n, "" if self.online else self.EWC_task_count+1),
+                self.register_buffer('{}_EWC_prev_task{}'.format(n, "" if self.online else self.EWC_task_count + 1),
                                      p.detach().clone())
                 # -precision (approximated by diagonal Fisher Information matrix)
-                if self.online and self.EWC_task_count==1:
+                if self.online and self.EWC_task_count == 1:
                     existing_values = getattr(self, '{}_EWC_estimated_fisher'.format(n))
                     est_fisher_info[n] += self.gamma * existing_values
-                self.register_buffer('{}_EWC_estimated_fisher{}'.format(n, "" if self.online else self.EWC_task_count+1),
-                                     est_fisher_info[n])
-        #print([n if p.requires_grad else 0 for n, p in self.named_parameters()])
+                self.register_buffer(
+                    '{}_EWC_estimated_fisher{}'.format(n, "" if self.online else self.EWC_task_count + 1),
+                    est_fisher_info[n])
+        # logging.info([n if p.requires_grad else 0 for n, p in self.named_parameters()])
 
         # If "offline EWC", increase task-count (for "online EWC", set it to 1 to indicate EWC-loss can be calculated)
         self.EWC_task_count = 1 if self.online else self.EWC_task_count + 1
@@ -178,13 +178,12 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
         # Set model back to its initial mode
         self.train(mode=mode)
 
-
     def ewc_loss(self):
         '''Calculate EWC-loss.'''
-        if self.EWC_task_count>0:
+        if self.EWC_task_count > 0:
             losses = []
             # If "offline EWC", loop over all previous tasks (if "online EWC", [EWC_task_count]=1 so only 1 iteration)
-            for task in range(1, self.EWC_task_count+1):
+            for task in range(1, self.EWC_task_count + 1):
                 for n, p in self.named_parameters():
                     if n.startswith('max_logvar') or n.startswith('min_logvar') or n.startswith('w_'):
                         continue
@@ -194,31 +193,30 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                         mean = getattr(self, '{}_EWC_prev_task{}'.format(n, "" if self.online else task))
                         fisher = getattr(self, '{}_EWC_estimated_fisher{}'.format(n, "" if self.online else task))
                         # If "online EWC", apply decay-term to the running sum of the Fisher Information matrices
-                        fisher = self.gamma*fisher if self.online else fisher
+                        fisher = self.gamma * fisher if self.online else fisher
                         # Calculate EWC-loss
-                        losses.append((fisher * (p-mean)**2).sum())
+                        losses.append((fisher * (p - mean) ** 2).sum())
             # Sum EWC-loss from all parameters (and from all tasks, if "offline EWC")
-            return (1./2)*sum(losses)
+            return (1. / 2) * sum(losses)
         else:
             # EWC-loss is 0 if there are no stored mode and precision yet
             return torch.tensor(0., device=self._device())
 
-
     def ewc_register_buffer(self, task_count):
         """ Register empty ewc buffer for reloading model"""
         self.EWC_task_count = task_count
-        for task in range(1, self.EWC_task_count+1):
+        for task in range(1, self.EWC_task_count + 1):
             for n, p in self.named_parameters():
                 if p.requires_grad:
                     n = n.replace('.', '__')
                     # -mode (=MAP parameter estimate)
                     self.register_buffer('{}_EWC_prev_task{}'.format(n, "" if self.online else task),
-                                        torch.zeros_like(p))
+                                         torch.zeros_like(p))
                     # -precision (approximated by diagonal Fisher Information matrix)
                     self.register_buffer('{}_EWC_estimated_fisher{}'.format(n, "" if self.online else task),
-                                        torch.zeros_like(p))
-    
-    #------------- "Synaptic Intelligence Synapses"-specifc functions -------------#
+                                         torch.zeros_like(p))
+
+    # ------------- "Synaptic Intelligence Synapses"-specifc functions -------------#
 
     def si_register_buffer(self):
         for n, p in self.named_parameters():
@@ -242,7 +240,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
             if p.requires_grad:
                 n = n.replace('.', '__')
                 if p.grad is not None:
-                    self.W[n].add_(-p.grad*(p.detach()-self.p_old[n]))
+                    self.W[n].add_(-p.grad * (p.detach() - self.p_old[n]))
                 self.p_old[n] = p.detach().clone()
 
     def update_omega(self, epsilon):
@@ -262,7 +260,7 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                 p_prev = getattr(self, '{}_SI_prev_task'.format(n))
                 p_current = p.detach().clone()
                 p_change = p_current - p_prev
-                omega_add = W[n]/(p_change**2 + epsilon)
+                omega_add = W[n] / (p_change ** 2 + epsilon)
                 try:
                     omega = getattr(self, '{}_SI_omega'.format(n))
                 except AttributeError:
@@ -272,7 +270,6 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                 # Store these new values in the model
                 self.register_buffer('{}_SI_prev_task'.format(n), p_current)
                 self.register_buffer('{}_SI_omega'.format(n), omega_new)
-
 
     def surrogate_loss(self):
         '''Calculate SI's surrogate loss.'''
@@ -287,11 +284,12 @@ class ContinualLearner(nn.Module, metaclass=abc.ABCMeta):
                     prev_values = getattr(self, '{}_SI_prev_task'.format(n))
                     omega = getattr(self, '{}_SI_omega'.format(n))
                     # Calculate SI's surrogate loss, sum over all parameters
-                    losses.append((omega * (p-prev_values)**2).sum())
+                    losses.append((omega * (p - prev_values) ** 2).sum())
             return sum(losses)
         except AttributeError:
             # SI-loss is 0 if there is no stored omega yet
             return torch.tensor(0., device=self._device())
+
 
 class BaselineReg(ContinualLearner):
     def __init__(self, hparams):
@@ -303,7 +301,7 @@ class BaselineReg(ContinualLearner):
         # Hiden Layers
         layers = []
         in_dim = x_dim + a_dim
-        for i, dim in enumerate(hparams.h_dims):
+        for i, dim in enumerate(hparams.hidden_layers):
             layers.append(nn.Linear(in_dim, dim))
             layers.append(nn.ReLU(inplace=True))
             in_dim = dim
@@ -319,10 +317,10 @@ class BaselineReg(ContinualLearner):
         # -EWC:
         if hparams.model == "ewc":
             self.empircal_fisher = hparams.empircal_fisher
-            self.gamma = hparams.ewc_online_gamma  #-> hyperparam (online EWC): decay-term for old tasks' contribution to quadratic term
-            self.online = hparams.ewc_online      #-> "online" (=single quadratic term) or "offline" (=quadratic term per task) EWC
-            self.fisher_n = None    #-> sample size for estimating FI-matrix (if "None", full pass over dataset)
-            self.EWC_task_count = 0 #-> keeps track of number of quadratic loss terms (for "offline EWC")
+            self.gamma = hparams.ewc_online_gamma  # -> hyperparam (online EWC): decay-term for old tasks' contribution to quadratic term
+            self.online = hparams.ewc_online  # -> "online" (=single quadratic term) or "offline" (=quadratic term per task) EWC
+            self.fisher_n = None  # -> sample size for estimating FI-matrix (if "None", full pass over dataset)
+            self.EWC_task_count = 0  # -> keeps track of number of quadratic loss terms (for "offline EWC")
 
     def add_weights(self, task_id):
         if task_id < self.num_tasks:
@@ -361,16 +359,17 @@ class BaselineReg(ContinualLearner):
 
         return output
 
+
 class BaselineCls(ContinualLearner):
     def __init__(self, hparams):
         super(BaselineCls, self).__init__()
 
-        in_dim = hparams.in_dim
+        in_dim = hparams.n_in
         self.in_dim = in_dim
 
         # Hiden Layers
         layers = []
-        for i, dim in enumerate(hparams.h_dims):
+        for i, dim in enumerate(hparams.hidden_layers):
             layers.append(nn.Linear(in_dim, dim))
             layers.append(nn.ReLU(inplace=True))
             in_dim = dim
@@ -385,10 +384,10 @@ class BaselineCls(ContinualLearner):
         # -EWC:
         if hparams.model == "ewc":
             self.empircal_fisher = hparams.empircal_fisher
-            self.gamma = hparams.ewc_online_gamma  #-> hyperparam (online EWC): decay-term for old tasks' contribution to quadratic term
-            self.online = hparams.ewc_online      #-> "online" (=single quadratic term) or "offline" (=quadratic term per task) EWC
-            self.fisher_n = None    #-> sample size for estimating FI-matrix (if "None", full pass over dataset)
-            self.EWC_task_count = 0 #-> keeps track of number of quadratic loss terms (for "offline EWC")
+            self.gamma = hparams.ewc_online_gamma  # -> hyperparam (online EWC): decay-term for old tasks' contribution to quadratic term
+            self.online = hparams.ewc_online  # -> "online" (=single quadratic term) or "offline" (=quadratic term per task) EWC
+            self.fisher_n = None  # -> sample size for estimating FI-matrix (if "None", full pass over dataset)
+            self.EWC_task_count = 0  # -> keeps track of number of quadratic loss terms (for "offline EWC")
 
     def add_weights(self, task_id):
         if task_id < self.num_tasks:
@@ -408,7 +407,7 @@ class BaselineCls(ContinualLearner):
 
         return F.log_softmax(output)
 
-    #----------------- EWC-specifc functions -----------------#
+    # ----------------- EWC-specifc functions -----------------#
 
     def estimate_fisher(self, dataset, allowed_classes=None, collate_fn=None):
         '''After completing training on a task, estimate diagonal of Fisher Information matrix.
@@ -440,7 +439,7 @@ class BaselineCls(ContinualLearner):
             output = self(x) if allowed_classes is None else self(x)[:, allowed_classes]
             if self.empircal_fisher:
                 # -use provided label to calculate loglikelihood --> "empirical Fisher":
-                label = torch.LongTensor([y]) if type(y)==int else y
+                label = torch.LongTensor([y]) if type(y) == int else y
                 if allowed_classes is not None:
                     label = [int(np.where(i == allowed_classes)[0][0]) for i in label.numpy()]
                     label = torch.LongTensor(label)
@@ -463,22 +462,23 @@ class BaselineCls(ContinualLearner):
                         est_fisher_info[n] += p.grad.detach() ** 2
 
         # Normalize by sample size used for estimation
-        est_fisher_info = {n: p/index for n, p in est_fisher_info.items()}
+        est_fisher_info = {n: p / index for n, p in est_fisher_info.items()}
 
         # Store new values in the network
         for n, p in self.named_parameters():
             if p.requires_grad:
                 n = n.replace('.', '__')
                 # -mode (=MAP parameter estimate)
-                self.register_buffer('{}_EWC_prev_task{}'.format(n, "" if self.online else self.EWC_task_count+1),
+                self.register_buffer('{}_EWC_prev_task{}'.format(n, "" if self.online else self.EWC_task_count + 1),
                                      p.detach().clone())
                 # -precision (approximated by diagonal Fisher Information matrix)
-                if self.online and self.EWC_task_count==1:
+                if self.online and self.EWC_task_count == 1:
                     existing_values = getattr(self, '{}_EWC_estimated_fisher'.format(n))
                     est_fisher_info[n] += self.gamma * existing_values
-                self.register_buffer('{}_EWC_estimated_fisher{}'.format(n, "" if self.online else self.EWC_task_count+1),
-                                     est_fisher_info[n])
-        #print([n if p.requires_grad else 0 for n, p in self.named_parameters()])
+                self.register_buffer(
+                    '{}_EWC_estimated_fisher{}'.format(n, "" if self.online else self.EWC_task_count + 1),
+                    est_fisher_info[n])
+        # logging.info([n if p.requires_grad else 0 for n, p in self.named_parameters()])
 
         # If "offline EWC", increase task-count (for "online EWC", set it to 1 to indicate EWC-loss can be calculated)
         self.EWC_task_count = 1 if self.online else self.EWC_task_count + 1
@@ -486,8 +486,9 @@ class BaselineCls(ContinualLearner):
         # Set model back to its initial mode
         self.train(mode=mode)
 
+
 class CLRegLoss(nn.Module):
-    def __init__(self, model, task_id = 0, reg_lambda=0, out_var = False):
+    def __init__(self, model, task_id=0, reg_lambda=0, out_var=False):
         super(CLRegLoss, self).__init__()
         self.task_id = task_id
         self.model = model
@@ -501,7 +502,7 @@ class CLRegLoss(nn.Module):
 
         l_reg = None
         mp = self.model.named_parameters()
-        
+
         for name, W in mp:
             if name.startswith('max_logvar') or name.startswith('min_logvar'):
                 continue
@@ -534,7 +535,7 @@ class CLRegLoss(nn.Module):
     def mse_loss(self, pred, y, task_id=None):
         y_dim = y.size(-1)
 
-        loss = (pred-y)**2
+        loss = (pred - y) ** 2
         loss = loss.sum() / y_dim
 
         return loss
@@ -547,8 +548,9 @@ class CLRegLoss(nn.Module):
 
         return loss
 
+
 class EWCLoss(CLRegLoss):
-    def __init__(self, model, task_id = 0, reg_lambda=0, ewc_beta=0, out_var=False):
+    def __init__(self, model, task_id=0, reg_lambda=0, ewc_beta=0, out_var=False):
         super(EWCLoss, self).__init__(model, task_id, reg_lambda, out_var)
         self.ewc_beta = ewc_beta
 
@@ -564,8 +566,9 @@ class EWCLoss(CLRegLoss):
 
         return -loss - reg
 
+
 class SILoss(CLRegLoss):
-    def __init__(self, model, task_id = 0, reg_lambda=0, si_c=0, out_var=False):
+    def __init__(self, model, task_id=0, reg_lambda=0, si_c=0, out_var=False):
         super(SILoss, self).__init__(model, task_id, reg_lambda, out_var)
         self.si_c = si_c
 

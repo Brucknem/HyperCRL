@@ -28,6 +28,7 @@ import numpy as np
 from warnings import warn
 import torch
 
+
 class MainNetInterface(ABC):
     """A general interface for main networks, that can be used stand-alone
     (i.e., having their own weights) or with no (or only some) internal
@@ -117,13 +118,14 @@ class MainNetInterface(ABC):
             :class:`utils.context_mod_layer.ContextModLayer` in case these are
             used in this network.
     """
+
     def __init__(self):
         """Initialize the network.
 
         Args:
 
         """
-        super(MainNetInterface, self).__init__()
+        # super(MainNetInterface, self).__init__()
 
         # The following member variables have to be set by all classes that
         # implement this interface.
@@ -153,7 +155,7 @@ class MainNetInterface(ABC):
     def _is_properly_setup(self):
         """This method can be used by classes that implement this interface to
         check whether all required properties have been set."""
-        assert(self._param_shapes is not None or self._all_shapes is not None)
+        assert (self._param_shapes is not None or self._all_shapes is not None)
         if self._param_shapes is None:
             warn('Private member "_param_shapes" should be specified in each ' +
                  'sublcass that implements this interface, since private ' +
@@ -172,26 +174,26 @@ class MainNetInterface(ABC):
             # `_hyper_shapes_learned` was not None.
             self._hyper_shapes = self._hyper_shapes_learned
 
-        assert(self._weights is not None or \
-               self._hyper_shapes_learned is not None)
+        assert (self._weights is not None or \
+                self._hyper_shapes_learned is not None)
 
         if self._hyper_shapes_learned is None and \
                 self.hyper_shapes_distilled is None:
             # Note, `weights` should only contain trainable weights and not
             # other things like running statistics. Thus, things that are passed
             # to an optimizer.
-            assert(len(self._weights) == len(self._param_shapes))
+            assert (len(self._weights) == len(self._param_shapes))
 
-        assert(isinstance(self._has_bias, bool))
-        assert(isinstance(self._has_fc_out, bool))
-        assert(isinstance(self._mask_fc_out, bool))
-        assert(isinstance(self._has_linear_out, bool))
+        assert (isinstance(self._has_bias, bool))
+        assert (isinstance(self._has_fc_out, bool))
+        assert (isinstance(self._mask_fc_out, bool))
+        assert (isinstance(self._has_linear_out, bool))
 
-        assert(self._layer_weight_tensors is not None)
-        assert(self._layer_bias_vectors is not None)
+        assert (self._layer_weight_tensors is not None)
+        assert (self._layer_bias_vectors is not None)
         if self._has_bias:
-            assert(len(self._layer_weight_tensors) == \
-                   len(self._layer_bias_vectors))
+            assert (len(self._layer_weight_tensors) == \
+                    len(self._layer_bias_vectors))
 
     @property
     def weights(self):
@@ -442,7 +444,6 @@ class MainNetInterface(ABC):
             for b in self.layer_bias_vectors:
                 torch.nn.init.constant_(b, 0)
 
+
 if __name__ == '__main__':
     pass
-
-

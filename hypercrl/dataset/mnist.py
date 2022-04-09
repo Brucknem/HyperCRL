@@ -7,6 +7,7 @@ import torch.utils.data as data
 
 IMAGE_SIZE = 32 * 32
 
+
 def getVal(trainval):
     val_size = len(trainval) // 6
     train_size = len(trainval) - val_size
@@ -14,12 +15,14 @@ def getVal(trainval):
     val = data.Subset(trainval, val_indices)
     return val
 
+
 def getTrain(trainval):
     val_size = len(trainval) // 6
     train_size = len(trainval) - val_size
     train_indices = range(train_size)
     train = data.Subset(trainval, train_indices)
     return train
+
 
 def _permutate_image_pixels(image, permutation):
     '''Permutate the pixels of an image according to [permutation].
@@ -31,9 +34,10 @@ def _permutate_image_pixels(image, permutation):
     else:
         c, h, w = image.size()
         image = image.view(c, -1)
-        image = image[:, permutation]  #--> same permutation for each channel
+        image = image[:, permutation]  # --> same permutation for each channel
         image = image.view(c, h, w)
         return image
+
 
 class PermutedMNIST(datasets.MNIST):
     permutations = [None] + [np.random.permutation(IMAGE_SIZE) for _ in range(100)]
@@ -48,6 +52,7 @@ class PermutedMNIST(datasets.MNIST):
             self.transform = transforms.Compose([self.transform, self.permu_transform])
         else:
             self.transform = self.permu_transform
+
 
 class SplitMNIST(datasets.MNIST):
     numbers_list = [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9]]
@@ -68,7 +73,7 @@ class SplitMNIST(datasets.MNIST):
                 index.append(i)
         self.targets = self.targets[index]
         self.data = self.data[index]
-    
+
     def __getitem__(self, index):
         img, target = super(SplitMNIST, self).__getitem__(index)
         target -= self.numbers[0]
@@ -97,10 +102,11 @@ class SplitMNIST10(datasets.MNIST):
                 index.append(i)
         self.targets = self.targets[index]
         self.data = self.data[index]
-    
+
     def __getitem__(self, index):
         img, target = super(SplitMNIST10, self).__getitem__(index)
         return img, target
+
 
 class FashionMNIST(SplitMNIST):
     urls = [
@@ -112,36 +118,41 @@ class FashionMNIST(SplitMNIST):
     classes = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal',
                'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
 
+
 """
 Test Cases
 """
 
+
 def test0(Dataset):
     ds = Dataset("data", 0, download=True)
-    print(ds.targets.size())
+    logging.info(ds.targets.size())
+
 
 def test1(Dataset):
     ds = Dataset("data", 0, download=True)
     train_dataset = getTrain(ds)
     val_dataset = getVal(ds)
-    print('train size:', len(train_dataset))
-    print('val size:', len(val_dataset))
+    logging.info('train size:', len(train_dataset))
+    logging.info('val size:', len(val_dataset))
     im = val_dataset[0][0]
     im.show()
 
+
 def test2():
     trans = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
     toPIL = transforms.ToPILImage()
-    Mnist = PermutedMNIST("data", 1, download=True, transform=trans) 
+    Mnist = PermutedMNIST("data", 1, download=True, transform=trans)
     im = toPIL(Mnist[0][0])
     im.show()
 
     Mnist2 = PermutedMNIST("data", 1, download=True, transform=trans, train=False)
     im = toPIL(Mnist[0][0])
     im.show()
+
 
 if __name__ == "__main__":
     test0(SplitMNIST10)

@@ -7,8 +7,10 @@ import matplotlib.pyplot as plt
 
 from torch.utils.data import TensorDataset
 
+
 def dataset2tensor(dataset):
     return TensorDataset(*dataset[:])
+
 
 class PNNBlock(nn.Module):
     def __init__(self, n_in, n_out, i, k):
@@ -38,6 +40,7 @@ class PNNBlock(nn.Module):
 
         return F.relu(x)
 
+
 class PNN(nn.Module):
     def __init__(self, hparams):
         super(PNN, self).__init__()
@@ -50,7 +53,7 @@ class PNN(nn.Module):
 
         self.num_tasks = 0
 
-        self.h_dims = hparams.h_dims
+        self.h_dims = hparams.hidden_layers
         self.columns = nn.ModuleList([])
 
     def freeze(self, k):
@@ -82,7 +85,7 @@ class PNN(nn.Module):
 
         self.num_tasks += 1
 
-    def forward(self, x, a, task_id = None):
+    def forward(self, x, a, task_id=None):
 
         if task_id is None:
             task_id = self.num_tasks - 1
@@ -99,7 +102,7 @@ class PNN(nn.Module):
 
         if self.out_var:
             linear1 = self.columns[task_id][-2]
-            linear2 =  self.columns[task_id][-1]
+            linear2 = self.columns[task_id][-1]
             max_logvar = getattr(self, f'max_logvar_{task_id}')
             min_logvar = getattr(self, f'min_logvar_{task_id}')
             output = linear1(h)
@@ -115,6 +118,7 @@ class PNN(nn.Module):
     def replay(self, i):
         return torch.zeros(1), torch.zeros(1)
 
+
 class Baseline(nn.Module):
     def __init__(self, hparams):
         super(Baseline, self).__init__()
@@ -125,7 +129,7 @@ class Baseline(nn.Module):
         # Hiden Layers
         layers = []
         in_dim = x_dim + a_dim
-        for i, dim in enumerate(hparams.h_dims):
+        for i, dim in enumerate(hparams.hidden_layers):
             layers.append(nn.Linear(in_dim, dim))
             layers.append(nn.ReLU(inplace=True))
             in_dim = dim
@@ -136,6 +140,7 @@ class Baseline(nn.Module):
         self.out_dim = hparams.out_dim
         self.out_var = hparams.out_var
         self.num_tasks = 0
+        self.out_func = hparams.out_func
 
     def add_weights(self, task_id):
         if task_id < self.num_tasks:
@@ -155,6 +160,7 @@ class Baseline(nn.Module):
         def reset(m):
             if type(m) == nn.Linear:
                 m.reset_parameters()
+
         self.net.apply(reset)
 
     def add_inducing_points(self, z, task_id):
@@ -165,7 +171,7 @@ class Baseline(nn.Module):
             z_y = torch.cat((z_y, z[2].to(device=z_y.device, dtype=z_y.dtype)), dim=0)
         else:
             z_x, z_a, z_y = z[0], z[1], z[2]
-        
+
         self.register_buffer(f"z_x{task_id}", z_x)
         self.register_buffer(f"z_a{task_id}", z_a)
         self.register_buffer(f"z_y{task_id}", z_y)
@@ -177,7 +183,7 @@ class Baseline(nn.Module):
         return z_x, z_a, z_y
 
     def replay(self, task_id):
-        x, a, y = self.get_inducing_points(task_id) 
+        x, a, y = self.get_inducing_points(task_id)
 
         pred = self.forward(x, a, task_id)
         return pred, y
@@ -189,6 +195,9 @@ class Baseline(nn.Module):
         phi = self.net(torch.cat((x, a), dim=-1))
         linear = getattr(self, f'w_{task_id}')
         output = linear(phi)
+
+        if self.out_func:
+            self.out_func(output)
 
         if self.out_var:
             linear2 = getattr(self, f'w_{task_id}_2')
@@ -208,6 +217,7 @@ class Baseline(nn.Module):
             max_logvar.requires_grad = False
             min_logvar.requires_grad = False
 
+
 class MTBaseline(Baseline):
     def __init__(self, hparams):
         super(MTBaseline, self).__init__(hparams)
@@ -219,11 +229,11 @@ class MTBaseline(Baseline):
 
     def add_trainset(self, collector, task_id):
         old_data, old_data_iter = [], []
-        for tid in range(0, 1+ task_id):
+        for tid in range(0, 1 + task_id):
             train_set, _ = collector.get_dataset(tid)
 
             train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.bs,
-                shuffle=True, drop_last=True)
+                                                       shuffle=True, drop_last=True)
             old_data.append(train_loader)
             old_data_iter.append(iter(train_loader))
 
@@ -246,8 +256,9 @@ class MTBaseline(Baseline):
         pred = self.forward(x_t, a_t, task_id)
         return pred, x_tt
 
+
 class MSELoss(nn.Module):
-    def __init__(self, model, M=0, task_id = 0, reg_lambda=0, out_var=False):
+    def __init__(self, model, M=0, task_id=0, reg_lambda=0, out_var=False):
         super(MSELoss, self).__init__()
         self.task_id = task_id
         self.model = model
@@ -262,7 +273,7 @@ class MSELoss(nn.Module):
 
         l_reg = None
         mp = self.model.named_parameters()
-        
+
         for name, W in mp:
             if name.startswith('max_logvar') or name.startswith('min_logvar'):
                 continue
@@ -274,7 +285,7 @@ class MSELoss(nn.Module):
         l_reg = self.reg_lambda * l_reg
         return l_reg
 
-    def forward(self, pred, y, task_id = None):
+    def forward(self, pred, y, task_id=None):
         mse = nn.functional.mse_loss
         y_dim = y.size(-1)
 
@@ -289,18 +300,19 @@ class MSELoss(nn.Module):
             for i in range(self.task_id):
                 # Adjust the loss according to batch size
                 a = mse(*self.model.replay(i), reduction='sum') / y_dim
-                a = (a  * y.size(0) / self.M).to(loss.device)
+                a = (a * y.size(0) / self.M).to(loss.device)
                 loss = loss + a
 
         reg = self.regularize(task_id)
 
         return - loss - reg
 
+
 class LogProbLoss(MSELoss):
-    def __init__(self, model, M=0, task_id = 0, reg_lambda=0):
+    def __init__(self, model, M=0, task_id=0, reg_lambda=0):
         super(LogProbLoss, self).__init__(model, M, task_id, reg_lambda)
 
-    def forward(self, pred, y, task_id = None):
+    def forward(self, pred, y, task_id=None):
         y_dim = y.size(-1)
 
         if task_id is None:
@@ -323,19 +335,20 @@ class LogProbLoss(MSELoss):
             loss += 0.01 * (max_logvar.sum() - min_logvar.sum())
 
             return loss
-        
+
         loss = one_task(tid, pred, y)
         if task_id is None and self.M > 0:
             for i in range(self.task_id):
                 # Adjust the loss according to batch size
                 pred_coreset, y_coreset = self.model.replay(i)
                 a = one_task(tid, pred_coreset, y_coreset)
-                a = (a  * y.size(0) / self.M).to(loss.device)
+                a = (a * y.size(0) / self.M).to(loss.device)
                 loss = loss + a
 
         reg = self.regularize(task_id)
 
         return - loss - reg
+
 
 class IPSelector():
     def __init__(self, dataset, hparams):
@@ -370,11 +383,11 @@ class BoundaryTest():
         # Plot
         # plt.ion()
 
-        #f, (y1_ax, y2_ax) = plt.subplots(2, 1, figsize=(6, 4))
-        #self.fig = (f, (y1_ax, y2_ax))
+        # f, (y1_ax, y2_ax) = plt.subplots(2, 1, figsize=(6, 4))
+        # self.fig = (f, (y1_ax, y2_ax))
 
-        #f.show()
-        #f.canvas.draw()
+        # f.show()
+        # f.canvas.draw()
 
     def factor_batch(self, p):
         N = p.mean.size(0)
@@ -387,10 +400,10 @@ class BoundaryTest():
 
             # Get the factorized covariance matrix for each data point in minibatch
             covar = torch.eye(K, dtype=mu.dtype, device=mu.device)
-            ind = torch.arange(n, K*N, N)
+            ind = torch.arange(n, K * N, N)
             covar *= p.covariance_matrix[ind, ind]
             mvn = torch.distributions.multivariate_normal. \
-                    MultivariateNormal(mu, covar)
+                MultivariateNormal(mu, covar)
             dists.append(mvn)
         return dists
 
@@ -408,15 +421,15 @@ class BoundaryTest():
             skl = []
             for (p, q) in zip(q_f, p_f):
                 skl_i = 0.5 * torch.distributions.kl.kl_divergence(p, q) \
-                     + 0.5 * torch.distributions.kl.kl_divergence(q, p)
+                        + 0.5 * torch.distributions.kl.kl_divergence(q, p)
                 skl.append(skl_i)
-            
+
         return torch.tensor(skl)
 
     def test(self, x, a):
         if self.hparams.model != "GP":
             return False
-        
+
         kl = self.sym_kl(x, a)
         self.kls.append(kl)
 

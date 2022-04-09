@@ -32,6 +32,7 @@ import json
 # Key that will be added to the state dictionary for maintenance reasons.
 _INTERNAL_KEY = '_ckpt_internal'
 
+
 def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
                     max_ckpts_to_keep=5, keep_cktp_every=2, timestamp=None):
     """Save checkpoint to file.
@@ -72,19 +73,19 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
             aims to synchronize checkpoint savings from multiple networks.
     """
     if timestamp is None:
-        ts = time.time() # timestamp
+        ts = time.time()  # timestamp
     else:
         ts = timestamp
 
-    assert('state_dict' in ckpt_dict.keys())
+    assert ('state_dict' in ckpt_dict.keys())
     # We need to store internal (checkpoint maintenance related) information in
     # each checkpoint.
     internal_key = _INTERNAL_KEY
-    assert(internal_key not in ckpt_dict.keys())
+    assert (internal_key not in ckpt_dict.keys())
     ckpt_dict[internal_key] = dict()
     ckpt_dict[internal_key]['permanent'] = False
     ckpt_dict[internal_key]['score'] = performance_score
-    ckpt_dict[internal_key]['ts']= ts
+    ckpt_dict[internal_key]['ts'] = ts
 
     # FIXME We currently don't care about file extensions.
     dname, fname = os.path.split(file_path)
@@ -133,7 +134,7 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
         perm_ckpt_needed = True
 
         num_wins = hrs_passed // keep_cktp_every
-        win_start = (num_wins-1) * keep_cktp_every
+        win_start = (num_wins - 1) * keep_cktp_every
 
         # Check whether a permanent checkpoint for the current window already
         # exists.
@@ -166,7 +167,7 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
                 # as this list is used in the next step to determine which
                 # checkpoints are removed.
                 del kept_ckpts[max_ind]
-                print('Checkpoint %s will be kept permanently.' % ckpt_tup[0])
+                logging.info('Checkpoint %s will be kept permanently.' % ckpt_tup[0])
 
                 # FIXME: We might need the device here as in the load method.
                 ckpt = torch.load(ckpt_tup[0])
@@ -174,16 +175,16 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
                 torch.save(ckpt, ckpt_tup[0])
 
             else:
-                print('New checkpoint will be kept permanently.')
+                logging.info('New checkpoint will be kept permanently.')
                 ckpt_dict[internal_key]['permanent'] = True
 
     ## Decide, whether a checkpoint has to be deleted.
     if len(kept_ckpts) >= max_ckpts_to_keep:
         kept_ckpts.sort(key=lambda tup: tup[2])
 
-        for i in range(len(kept_ckpts) - (max_ckpts_to_keep-1)):
+        for i in range(len(kept_ckpts) - (max_ckpts_to_keep - 1)):
             fn = kept_ckpts[i][0]
-            print('Deleting old checkpoint: %s.' % fn)
+            logging.info('Deleting old checkpoint: %s.' % fn)
             os.remove(fn)
 
     ### Save new checkpoint.
@@ -191,7 +192,8 @@ def save_checkpoint(ckpt_dict, file_path, performance_score, train_iter=None,
         file_path += '_%d' % train_iter
 
     torch.save(ckpt_dict, file_path)
-    print('Checkpoint saved to %s' % file_path)
+    logging.info('Checkpoint saved to %s' % file_path)
+
 
 def load_checkpoint(ckpt_path, net, device=None, ret_performance_score=False):
     """Load a checkpoint from file.
@@ -232,6 +234,7 @@ def load_checkpoint(ckpt_path, net, device=None, ret_performance_score=False):
 
     return ckpt
 
+
 def make_ckpt_list(file_path):
     """Creates a file that lists all checkpoints together with there scores,
     such that one can easily find the checkpoint associated with the maximum
@@ -244,7 +247,7 @@ def make_ckpt_list(file_path):
 
     dname, fname = os.path.split(file_path)
 
-    assert(os.path.exists(dname))
+    assert (os.path.exists(dname))
 
     ckpt_fns = [(f, os.path.join(dname, f)) for f in os.listdir(dname) if
                 os.path.isfile(os.path.join(dname, f)) and
@@ -268,6 +271,7 @@ def make_ckpt_list(file_path):
         for tup in ckpts:
             f.write('%s, %f\n' % (tup[0], tup[1]))
 
+
 def get_best_ckpt_path(file_path):
     """Returns the path to the checkpoint with the highest score.
 
@@ -275,7 +279,7 @@ def get_best_ckpt_path(file_path):
         file_path: See method :func:`save_checkpoints`.
     """
     dname, fname = os.path.split(file_path)
-    assert(os.path.exists(dname))
+    assert (os.path.exists(dname))
 
     # See method make_ckpt_list.
     ckpt_list_fn = os.path.join(dname, 'score_list_' + fname + '.txt')
@@ -306,6 +310,7 @@ def get_best_ckpt_path(file_path):
             best_ckpt_path = fpath
 
     return best_ckpt_path
+
 
 if __name__ == '__main__':
     pass

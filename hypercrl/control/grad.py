@@ -5,7 +5,7 @@ from torch import nn, optim
 
 class GradPlan():  # jit.ScriptModule):
     def __init__(self, dynamics, cost, nx, nu, samples, opt_iters, planning_horizon,
-            device, dtype=torch.float32, grad_clip=True, init_covar_diag=1):
+                 device, dtype=torch.float32, grad_clip=True, init_covar_diag=1):
         super().__init__()
         self.H = planning_horizon
         self.opt_iters = opt_iters
@@ -43,7 +43,9 @@ class GradPlan():  # jit.ScriptModule):
         a_std = torch.ones(self.H, B, 1, self.a_size, device=self.device)
 
         # Sample actions (T x (B*K) x A)
-        actions = (a_mu + a_std * torch.randn(self.H, B, self.K, self.a_size, device=self.device)).view(self.H, B * self.K, self.a_size)
+        actions = (a_mu + a_std * torch.randn(self.H, B, self.K, self.a_size, device=self.device)).view(self.H,
+                                                                                                        B * self.K,
+                                                                                                        self.a_size)
         # TODO: debug
         # actions = actions*0
         actions = actions.clone().detach().requires_grad_(True)
@@ -60,22 +62,22 @@ class GradPlan():  # jit.ScriptModule):
             costs = costs.sum()
             costs.backward()
 
-            # print(actions.grad.size())
+            # logging.info(actions.grad.size())
 
             # grad clip
             # Find norm across batch
             if self.grad_clip:
                 epsilon = 1e-6
                 max_grad_norm = 1.0
-                actions_grad_norm = actions.grad.norm(2.0,dim=2,keepdim=True)+epsilon
-                # print("before clip", actions.grad.max().cpu().numpy())
+                actions_grad_norm = actions.grad.norm(2.0, dim=2, keepdim=True) + epsilon
+                # logging.info("before clip", actions.grad.max().cpu().numpy())
 
                 # Normalize by that
                 actions.grad.data.div_(actions_grad_norm)
                 actions.grad.data.mul_(actions_grad_norm.clamp(min=0, max=max_grad_norm))
-                # print("after clip", actions.grad.max().cpu().numpy())
+                # logging.info("after clip", actions.grad.max().cpu().numpy())
 
-            # print(actions.grad)
+            # logging.info(actions.grad)
 
             optimizer.step()
 
