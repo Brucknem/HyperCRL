@@ -1,0 +1,22 @@
+digraph {
+	graph [size="12,12"]
+	node [align=left fontname=monospace fontsize=10 height=0.2 ranksep=0.1 shape=box style=filled]
+	140640979087504 [label="
+ (10, 26)" fillcolor=darkolivegreen1]
+	140640983706760 [label=LeakyReluBackward0]
+	140640983707096 -> 140640983706760
+	140640983707096 [label=AddmmBackward]
+	140640979063192 -> 140640983707096
+	140640983739560 [label="linear.0.bias
+ (26)" fillcolor=lightblue]
+	140640983739560 -> 140640979063192
+	140640979063192 [label=AccumulateGrad]
+	140640979063752 -> 140640983707096
+	140640979063752 [label=TBackward]
+	140640979063864 -> 140640979063752
+	140640983738912 [label="linear.0.weight
+ (26, 512)" fillcolor=lightblue]
+	140640983738912 -> 140640979063864
+	140640979063864 [label=AccumulateGrad]
+	140640983706760 -> 140640979087504
+}
